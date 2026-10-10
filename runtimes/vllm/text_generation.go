@@ -1,15 +1,38 @@
 package vllm
 
 import (
+	"os"
+
 	"orcn/core"
 )
+
+func isDevelopment() bool {
+	env := os.Getenv("APP_ENV")
+	return env == "" || env == "development" || env == "dev"
+}
 
 func (v *VLLMRuntime) buildTextGenerationJobSpec(modelID string, config map[string]string, runtimeConfig *modelRuntimeConfig) (*core.JobSpec, error) {
 	command := commonModelArgs(modelID, config)
 	command = append(command,
 		"--dtype", "auto",
 		"--cpu-offload-gb", configValue(config, "cpu_offload_gb", "0"),
+		"--enable-prompt-tokens-details",
+		// "--enable-per-request-metrics", // TODO: enable when replica reconciler + Prometheus scraping is wired up
 	)
+
+	if isDevelopment() {
+		// Dev: keep uvicorn at default "info" so every request prints a log line
+		// (POST /v1/chat/completions 200 OK). Periodic stats dumps also stay visible.
+		command = append(command, "--uvicorn-log-level", "info")
+	} else {
+		// Prod: silence HTTP access logs (we have per-request metrics via Prometheus)
+		// and suppress periodic stats dumps (--disable-log-stats).
+		// Errors/warnings from Python still surface — they are unaffected by these flags.
+		command = append(command,
+			"--disable-log-stats",
+			"--uvicorn-log-level", "warning",
+		)
+	}
 
 	if maxLen := configValue(config, "max_model_len", ""); maxLen != "" {
 		command = append(command, "--max-model-len", maxLen)
@@ -35,6 +58,12 @@ func (v *VLLMRuntime) buildTextGenerationJobSpec(modelID string, config map[stri
 	}
 	if configValue(config, "enforce_eager", "false") == "true" {
 		command = append(command, "--enforce-eager")
+	}
+	if maxSeqs := configValue(config, "max_num_seqs", ""); maxSeqs != "" {
+		command = append(command, "--max-num-seqs", maxSeqs)
+	}
+	if maxBatchedTokens := configValue(config, "max_num_batched_tokens", ""); maxBatchedTokens != "" {
+		command = append(command, "--max-num-batched-tokens", maxBatchedTokens)
 	}
 
 	return v.buildJobSpec(modelID, resolveEntrypoint(runtimeConfig), command, vllmHealthPath, config), nil
@@ -96,6 +125,14 @@ func (v *VLLMRuntime) textGenerationSchema() []core.ConfigOption {
 		{
 			Key: "enforce_eager", Name: "Enforce Eager",
 			Description: "Disable CUDA graph capture for compatibility.", Type: "boolean", Default: "false",
+		},
+		{
+			Key: "max_num_seqs", Name: "Maximum Concurrent Sequences",
+			Description: "Maximum number of text generation requests processed concurrently. Leave empty to use vLLM's default.", Type: "number", Default: "",
+		},
+		{
+			Key: "max_num_batched_tokens", Name: "Maximum Batched Tokens",
+			Description: "Upper bound for tokens processed in one scheduler batch. Leave empty to use vLLM's default.", Type: "number", Default: "",
 		},
 	}
 }
