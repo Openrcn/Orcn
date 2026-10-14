@@ -2,6 +2,7 @@
 
 > ORCN — Open Resource Compute Network
 
+Orcn : Before the model. Beyond the request.
 Distributed inference orchestration and routing platform for deploying and serving AI models across heterogeneous compute infrastructure.
 
 ---
