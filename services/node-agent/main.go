@@ -11,9 +11,9 @@ import (
 	"orcn/services/node-agent/config"
 	"orcn/services/node-agent/engines/docker"
 	"orcn/services/node-agent/events"
-	healthreconcile "orcn/services/node-agent/reconcile/health"
+	"orcn/services/node-agent/health"
 	restinterface "orcn/services/node-agent/interfaces/rest"
-	"orcn/services/node-agent/reconcile/telemetry"
+	"orcn/services/node-agent/telemetry"
 )
 
 func main() {
@@ -32,23 +32,23 @@ func main() {
 	}
 	defer engine.Close()
 
-	// 3. Initialize Background Reconcilers
+	// 3. Initialize Background Workers (Telemetry & Health)
 	var telemetryBuffer *telemetry.Buffer
-	var telemetryReconciler *telemetry.Reconciler
+	var telemetryCollector *telemetry.Collector
 	if cfg.TelemetryEnabled {
-		telemetryReconciler = telemetry.New(cfg.TelemetryInterval, cfg.TelemetryBufferPoints)
-		telemetryBuffer = telemetryReconciler.Buffer()
+		telemetryCollector = telemetry.NewCollector(cfg.TelemetryInterval, cfg.TelemetryBufferPoints)
+		telemetryBuffer = telemetryCollector.Buffer()
 	}
 
 	// 4. Initialize Network Interfaces (Admin Control Plane & Proxy Router)
-	//    State is created here so the health reconciler can reference it.
+	//    State is created here so the health monitor can reference it.
 	state := restinterface.NewRegistrationState(cfg.AgentMode, cfg.MaxWorkloadCount)
 
-	var healthStore *healthreconcile.Store
-	var healthReconciler *healthreconcile.Reconciler
+	var healthStore *health.Store
+	var healthMonitor *health.Monitor
 	if cfg.HealthCheckEnabled {
-		healthStore = healthreconcile.NewStore()
-		healthReconciler = healthreconcile.NewReconciler(healthreconcile.Config{
+		healthStore = health.NewStore()
+		healthMonitor = health.NewMonitor(health.Config{
 			Interval:         cfg.HealthCheckInterval,
 			FailureThreshold: cfg.HealthCheckFailureThreshold,
 			ProxyTargetHost:  cfg.ProxyTargetHost,
@@ -59,11 +59,11 @@ func main() {
 
 	// 5. Register Components into Orchestrator
 	nodeAgent := agent.New()
-	if telemetryReconciler != nil {
-		nodeAgent.Register(telemetryReconciler)
+	if telemetryCollector != nil {
+		nodeAgent.Register(telemetryCollector)
 	}
-	if healthReconciler != nil {
-		nodeAgent.Register(healthReconciler)
+	if healthMonitor != nil {
+		nodeAgent.Register(healthMonitor)
 	}
 	nodeAgent.Register(adminServer)
 	nodeAgent.Register(proxyServer)

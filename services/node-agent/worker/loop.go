@@ -1,4 +1,4 @@
-package reconcile
+package worker
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Loop executes a reconciliation function periodically.
+// Loop executes a function periodically.
 // It implements agent.Component.
 type Loop struct {
 	name     string
@@ -17,7 +17,7 @@ type Loop struct {
 	stopCh chan struct{}
 }
 
-// NewLoop creates a named periodic reconciliation loop.
+// NewLoop creates a named periodic execution loop.
 func NewLoop(name string, interval time.Duration, fn func(ctx context.Context) error) *Loop {
 	return &Loop{
 		name:     name,

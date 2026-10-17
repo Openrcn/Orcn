@@ -10,7 +10,7 @@ import (
 
 	"orcn/core"
 	"orcn/core/logger"
-	"orcn/services/node-agent/reconcile"
+	"orcn/services/node-agent/worker"
 
 	containertypes "github.com/docker/docker/api/types/container"
 )
@@ -73,9 +73,9 @@ func (p *defaultHTTPProber) Probe(ctx context.Context, targetURL string, expecte
 	return resp.StatusCode, latency, nil
 }
 
-// Reconciler is an agent component that reconciles health status across all deployments and containers.
-type Reconciler struct {
-	loop             *reconcile.Loop
+// Monitor is an agent component that periodically probes and monitors health status across all deployments and containers.
+type Monitor struct {
+	loop             *worker.Loop
 	workloads        WorkloadProvider
 	inspector        ContainerInspector
 	store            *Store
@@ -85,15 +85,15 @@ type Reconciler struct {
 	logger           *logger.Logger
 }
 
-// Config holds configuration parameters for the health reconciler.
+// Config holds configuration parameters for the health monitor.
 type Config struct {
 	Interval         time.Duration
 	FailureThreshold int
 	ProxyTargetHost  string
 }
 
-// NewReconciler creates a new Health Reconciler component.
-func NewReconciler(cfg Config, workloads WorkloadProvider, inspector ContainerInspector, store *Store) *Reconciler {
+// NewMonitor creates a new Health Monitor component.
+func NewMonitor(cfg Config, workloads WorkloadProvider, inspector ContainerInspector, store *Store) *Monitor {
 	if cfg.Interval <= 0 {
 		cfg.Interval = 5 * time.Second
 	}
@@ -104,48 +104,54 @@ func NewReconciler(cfg Config, workloads WorkloadProvider, inspector ContainerIn
 		store = NewStore()
 	}
 
-	r := &Reconciler{
+	m := &Monitor{
 		workloads:        workloads,
 		inspector:        inspector,
 		store:            store,
 		prober:           newDefaultHTTPProber(),
 		proxyTargetHost:  cfg.ProxyTargetHost,
 		failureThreshold: cfg.FailureThreshold,
-		logger:           logger.New("HEALTH_RECONCILER"),
+		logger:           logger.New("HEALTH_MONITOR"),
 	}
 
-	r.loop = reconcile.NewLoop("Health_Reconciler", cfg.Interval, r.reconcile)
-	return r
+	m.loop = worker.NewLoop("Health_Monitor", cfg.Interval, m.Check)
+	return m
 }
 
-func (r *Reconciler) SetProber(prober HTTPProber) {
-	r.prober = prober
+// New is an alias for NewMonitor.
+func New(cfg Config, workloads WorkloadProvider, inspector ContainerInspector, store *Store) *Monitor {
+	return NewMonitor(cfg, workloads, inspector, store)
 }
 
-func (r *Reconciler) Name() string {
-	return r.loop.Name()
+func (m *Monitor) SetProber(prober HTTPProber) {
+	m.prober = prober
 }
 
-func (r *Reconciler) Start(ctx context.Context) error {
-	r.logger.Info("Starting health reconcile loop...")
-	return r.loop.Start(ctx)
+func (m *Monitor) Name() string {
+	return m.loop.Name()
 }
 
-func (r *Reconciler) Stop(ctx context.Context) error {
-	r.logger.Info("Stopping health reconcile loop...")
-	return r.loop.Stop(ctx)
+func (m *Monitor) Start(ctx context.Context) error {
+	m.logger.Info("Starting health monitor loop...")
+	return m.loop.Start(ctx)
 }
 
-func (r *Reconciler) Store() *Store {
-	return r.store
+func (m *Monitor) Stop(ctx context.Context) error {
+	m.logger.Info("Stopping health monitor loop...")
+	return m.loop.Stop(ctx)
 }
 
-func (r *Reconciler) reconcile(ctx context.Context) error {
-	if r.workloads == nil || r.inspector == nil {
+func (m *Monitor) Store() *Store {
+	return m.store
+}
+
+// Check inspects all workloads and probes their containers, updating the health store.
+func (m *Monitor) Check(ctx context.Context) error {
+	if m.workloads == nil || m.inspector == nil {
 		return nil
 	}
 
-	jobs := r.workloads.Jobs()
+	jobs := m.workloads.Jobs()
 	activeDeployments := make(map[string]struct{}, len(jobs))
 
 	now := time.Now().UTC()
@@ -164,7 +170,7 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 		}
 
 		for _, containerSpec := range job.Containers {
-			cHealth := r.checkContainer(ctx, depName, containerSpec, now)
+			cHealth := m.checkContainer(ctx, depName, containerSpec, now)
 			depHealth.Containers[containerSpec.ID] = cHealth
 			depHealth.TotalContainers++
 
@@ -193,16 +199,16 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 			depHealth.Status = StatusHealthy
 		}
 
-		r.store.SetDeployment(depHealth)
+		m.store.SetDeployment(depHealth)
 	}
 
 	// Purge workloads that were unregistered
-	r.store.Prune(activeDeployments)
+	m.store.Prune(activeDeployments)
 	return nil
 }
 
-func (r *Reconciler) checkContainer(ctx context.Context, depName string, spec core.ContainerSpec, now time.Time) *ContainerHealth {
-	current, exists := r.store.GetContainer(depName, spec.ID)
+func (m *Monitor) checkContainer(ctx context.Context, depName string, spec core.ContainerSpec, now time.Time) *ContainerHealth {
+	current, exists := m.store.GetContainer(depName, spec.ID)
 	if !exists {
 		current = &ContainerHealth{
 			ContainerID:      spec.ID,
@@ -215,7 +221,7 @@ func (r *Reconciler) checkContainer(ctx context.Context, depName string, spec co
 	current.LastCheckedAt = now
 
 	// 1. Inspect container
-	inspection, err := r.inspector.Inspect(ctx, spec.ID)
+	inspection, err := m.inspector.Inspect(ctx, spec.ID)
 	if err != nil || inspection.State == nil || !inspection.State.Running {
 		// Process is not running or not found -> Immediate Down
 		var exitCode *int
@@ -224,7 +230,7 @@ func (r *Reconciler) checkContainer(ctx context.Context, depName string, spec co
 			exitCode = &ec
 		}
 
-		r.transitionStatus(current, StatusDown, false, now)
+		m.transitionStatus(current, StatusDown, false, now)
 		current.ConsecutiveFailures++
 		current.ConsecutiveSuccesses = 0
 		current.ExitCode = exitCode
@@ -253,14 +259,14 @@ func (r *Reconciler) checkContainer(ctx context.Context, depName string, spec co
 		current.LastError = ""
 		current.LastStatusCode = 0
 		current.LastLatencyMs = 0
-		r.transitionStatus(current, StatusHealthy, true, now)
+		m.transitionStatus(current, StatusHealthy, true, now)
 		return current
 	}
 
 	current.HasProbe = true
 
 	// 3. Resolve target address for HTTP probe
-	host := r.resolveContainerHost(inspection)
+	host := m.resolveContainerHost(inspection)
 	targetURL := formatProbeURL(host, port, probeSpec.Path)
 
 	timeout := time.Duration(probeSpec.TimeoutSeconds) * time.Second
@@ -268,7 +274,7 @@ func (r *Reconciler) checkContainer(ctx context.Context, depName string, spec co
 		timeout = 5 * time.Second
 	}
 
-	statusCode, latency, probeErr := r.prober.Probe(ctx, targetURL, probeSpec.ExpectedStatus, timeout)
+	statusCode, latency, probeErr := m.prober.Probe(ctx, targetURL, probeSpec.ExpectedStatus, timeout)
 	current.LastStatusCode = statusCode
 	current.LastLatencyMs = latency
 
@@ -277,7 +283,7 @@ func (r *Reconciler) checkContainer(ctx context.Context, depName string, spec co
 		current.ConsecutiveSuccesses++
 		current.ConsecutiveFailures = 0
 		current.LastError = ""
-		r.transitionStatus(current, StatusHealthy, true, now)
+		m.transitionStatus(current, StatusHealthy, true, now)
 		return current
 	}
 
@@ -286,17 +292,17 @@ func (r *Reconciler) checkContainer(ctx context.Context, depName string, spec co
 	current.ConsecutiveSuccesses = 0
 	current.LastError = probeErr.Error()
 
-	if current.ConsecutiveFailures >= r.failureThreshold {
-		r.transitionStatus(current, StatusUnhealthy, false, now)
+	if current.ConsecutiveFailures >= m.failureThreshold {
+		m.transitionStatus(current, StatusUnhealthy, false, now)
 	} else {
 		// Degraded: failed probe count < threshold
-		r.transitionStatus(current, StatusDegraded, false, now)
+		m.transitionStatus(current, StatusDegraded, false, now)
 	}
 
 	return current
 }
 
-func (r *Reconciler) transitionStatus(c *ContainerHealth, next Status, ready bool, now time.Time) {
+func (m *Monitor) transitionStatus(c *ContainerHealth, next Status, ready bool, now time.Time) {
 	if c.Status != next {
 		c.Status = next
 		c.LastTransitionAt = now
@@ -304,9 +310,9 @@ func (r *Reconciler) transitionStatus(c *ContainerHealth, next Status, ready boo
 	c.IsReady = ready
 }
 
-func (r *Reconciler) resolveContainerHost(inspection containertypes.InspectResponse) string {
-	if r.proxyTargetHost != "" {
-		return r.proxyTargetHost
+func (m *Monitor) resolveContainerHost(inspection containertypes.InspectResponse) string {
+	if m.proxyTargetHost != "" {
+		return m.proxyTargetHost
 	}
 	if inspection.NetworkSettings != nil {
 		for _, network := range inspection.NetworkSettings.Networks {

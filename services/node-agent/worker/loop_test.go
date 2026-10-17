@@ -1,4 +1,4 @@
-package reconcile
+package worker
 
 import (
 	"context"

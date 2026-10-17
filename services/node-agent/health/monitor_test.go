@@ -52,7 +52,7 @@ func (m *mockProber) Probe(ctx context.Context, url string, expectedStatus int, 
 	return 200, 10, nil
 }
 
-func TestHealthReconciler(t *testing.T) {
+func TestHealthMonitor(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Setup specs: 1 deployment with 2 containers
@@ -128,15 +128,15 @@ func TestHealthReconciler(t *testing.T) {
 	}
 
 	store := NewStore()
-	reconciler := NewReconciler(Config{
+	monitor := NewMonitor(Config{
 		Interval:         time.Second,
 		FailureThreshold: 3,
 	}, workloads, inspector, store)
-	reconciler.SetProber(prober)
+	monitor.SetProber(prober)
 
-	// Step 1: Initial reconcile -> both should be healthy
-	if err := reconciler.reconcile(ctx); err != nil {
-		t.Fatalf("reconcile error: %v", err)
+	// Step 1: Initial check -> both should be healthy
+	if err := monitor.Check(ctx); err != nil {
+		t.Fatalf("check error: %v", err)
 	}
 
 	dep, ok := store.GetDeployment("dep-1")
@@ -167,7 +167,7 @@ func TestHealthReconciler(t *testing.T) {
 		err:     errors.New("expected status 200, got 500"),
 	}
 
-	_ = reconciler.reconcile(ctx)
+	_ = monitor.Check(ctx)
 	c1, _ = store.GetContainer("dep-1", "c1")
 	if c1.Status != StatusDegraded {
 		t.Errorf("expected c1 status degraded on 1st fail, got %v", c1.Status)
@@ -182,7 +182,7 @@ func TestHealthReconciler(t *testing.T) {
 	}
 
 	// Step 3: Probe fails 2nd time -> still degraded
-	_ = reconciler.reconcile(ctx)
+	_ = monitor.Check(ctx)
 	c1, _ = store.GetContainer("dep-1", "c1")
 	if c1.Status != StatusDegraded {
 		t.Errorf("expected c1 status degraded on 2nd fail, got %v", c1.Status)
@@ -192,7 +192,7 @@ func TestHealthReconciler(t *testing.T) {
 	}
 
 	// Step 4: Probe fails 3rd time -> threshold reached -> unhealthy
-	_ = reconciler.reconcile(ctx)
+	_ = monitor.Check(ctx)
 	c1, _ = store.GetContainer("dep-1", "c1")
 	if c1.Status != StatusUnhealthy {
 		t.Errorf("expected c1 status unhealthy on 3rd fail, got %v", c1.Status)
@@ -211,7 +211,7 @@ func TestHealthReconciler(t *testing.T) {
 			},
 		},
 	}
-	_ = reconciler.reconcile(ctx)
+	_ = monitor.Check(ctx)
 	c2, _ = store.GetContainer("dep-1", "c2")
 	if c2.Status != StatusDown {
 		t.Errorf("expected c2 status down immediately, got %v", c2.Status)
@@ -228,7 +228,7 @@ func TestHealthReconciler(t *testing.T) {
 
 	// Step 6: Recovery for c1
 	prober.results["http://172.17.0.2:80/healthz"] = probeResult{status: 200, latency: 10, err: nil}
-	_ = reconciler.reconcile(ctx)
+	_ = monitor.Check(ctx)
 	c1, _ = store.GetContainer("dep-1", "c1")
 	if c1.Status != StatusHealthy || !c1.IsReady {
 		t.Errorf("expected c1 to recover to healthy, got %+v", c1)

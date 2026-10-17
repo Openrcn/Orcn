@@ -26,7 +26,7 @@ type Config struct {
 	TelemetryEnabled            bool          // whether background telemetry sampler is active
 	TelemetryInterval           time.Duration // sampling interval (e.g. 5s)
 	TelemetryBufferPoints       int           // max sample points retained in ring buffer (e.g. 60 = 5 min at 5s)
-	HealthCheckEnabled          bool          // whether background health check reconciler is active
+	HealthCheckEnabled          bool          // whether background health check monitor is active
 	HealthCheckInterval         time.Duration // sampling interval (e.g. 5s)
 	HealthCheckFailureThreshold int           // consecutive failures before unhealthy (e.g. 3)
 }

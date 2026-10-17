@@ -15,8 +15,8 @@ import (
 	"orcn/services/node-agent/capabilities"
 	"orcn/services/node-agent/engines/docker"
 	"orcn/services/node-agent/events"
-	"orcn/services/node-agent/reconcile/health"
-	"orcn/services/node-agent/reconcile/telemetry"
+	"orcn/services/node-agent/health"
+	"orcn/services/node-agent/telemetry"
 )
 
 type AdminServer struct {
