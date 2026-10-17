@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"sync"
+	"sync/atomic"
 
 	"orcn/services/node-agent/resources"
 )
@@ -36,25 +38,41 @@ func main() {
 		log.Fatalf("register HF resource installer: %v", err)
 	}
 
-	//TODO : parallelize resource installation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var hasErr atomic.Bool
+
 	for _, resource := range plan.Resources {
-		id := resource.ID
+		res := resource
+		id := res.ID
 		if id == "" {
-			id = resource.Type
+			id = res.Type
 		}
-		log.Printf("resource installing id=%s type=%s destination=%s", id, resource.Type, resource.Destination)
-		progress := func(done, total int64) {
-			if total > 0 {
-				log.Printf("resource progress id=%s downloaded_bytes=%d total_bytes=%d percentage=%.2f", id, done, total, float64(done)*100/float64(total))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Printf("resource installing id=%s type=%s destination=%s", id, res.Type, res.Destination)
+			progress := func(done, total int64) {
+				if total > 0 {
+					log.Printf("resource progress id=%s downloaded_bytes=%d total_bytes=%d percentage=%.2f", id, done, total, float64(done)*100/float64(total))
+					return
+				}
+				log.Printf("resource progress id=%s downloaded_bytes=%d", id, done)
+			}
+			if err := registry.Install(ctx, res, progress); err != nil {
+				log.Printf("resource failed id=%s error=%v", id, err)
+				hasErr.Store(true)
+				cancel()
 				return
 			}
-			log.Printf("resource progress id=%s downloaded_bytes=%d", id, done)
-		}
-		err = registry.Install(context.Background(), resource, progress)
-		if err != nil {
-			log.Printf("resource failed id=%s error=%v", id, err)
-			os.Exit(1)
-		}
-		log.Printf("resource installed id=%s", id)
+			log.Printf("resource installed id=%s", id)
+		}()
+	}
+	wg.Wait()
+
+	if hasErr.Load() {
+		os.Exit(1)
 	}
 }
