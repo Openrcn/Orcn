@@ -19,6 +19,9 @@ func TestResourceInstallerCoverage(t *testing.T) {
 	if err := registry.Register("hf", installHF); err != nil {
 		t.Fatalf("register HF: %v", err)
 	}
+	if err := registry.Register("file", installFile); err != nil {
+		t.Fatalf("register file: %v", err)
+	}
 
 	// Verify every advertised provider has an installer
 	for _, provider := range resourcetype.Providers {

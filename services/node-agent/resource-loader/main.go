@@ -37,6 +37,9 @@ func main() {
 	if err := registry.Register("hf", installHF); err != nil {
 		log.Fatalf("register HF resource installer: %v", err)
 	}
+	if err := registry.Register("file", installFile); err != nil {
+		log.Fatalf("register file resource installer: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -77,4 +77,38 @@ var Providers = []Provider{
 			},
 		},
 	},
+	{
+		ID:          "file",
+		Name:        "Inline File / Content",
+		Description: "Directly create a configuration or script file from text content.",
+		Fields: []ProviderField{
+			{
+				Name:        "content",
+				Label:       "Content",
+				Type:        "textarea",
+				Placeholder: "# Paste file content or configuration here...",
+				Description: "Raw text content to write into the file.",
+				Required:    true,
+				SpecKey:     "content",
+			},
+			{
+				Name:        "target",
+				Label:       "Target Mount Path",
+				Type:        "text",
+				Placeholder: "e.g. /workspace/config.yaml or /app/.env",
+				Description: "Absolute destination path for the created file.",
+				Required:    true,
+				SpecKey:     "target",
+			},
+			{
+				Name:        "permissions",
+				Label:       "Permissions",
+				Type:        "text",
+				Placeholder: "0644",
+				Description: "File mode permissions (default 0644, or 0755 for executables).",
+				Required:    false,
+				SpecKey:     "permissions",
+			},
+		},
+	},
 }
