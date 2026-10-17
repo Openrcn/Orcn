@@ -40,6 +40,12 @@ func main() {
 	if err := registry.Register("file", installFile); err != nil {
 		log.Fatalf("register file resource installer: %v", err)
 	}
+	if err := registry.Register("git", installGit); err != nil {
+		log.Fatalf("register git resource installer: %v", err)
+	}
+	if err := registry.Register("s3", installS3); err != nil {
+		log.Fatalf("register s3 resource installer: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

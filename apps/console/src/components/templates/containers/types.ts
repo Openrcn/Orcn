@@ -1,7 +1,7 @@
 export interface ProviderField {
   name: string;
   label: string;
-  type: "text" | "textarea" | "number" | "string_list";
+  type: "text" | "textarea" | "number" | "string_list" | "password" | "secret";
   placeholder?: string;
   description?: string;
   required?: boolean;

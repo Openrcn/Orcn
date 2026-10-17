@@ -22,6 +22,12 @@ func TestResourceInstallerCoverage(t *testing.T) {
 	if err := registry.Register("file", installFile); err != nil {
 		t.Fatalf("register file: %v", err)
 	}
+	if err := registry.Register("git", installGit); err != nil {
+		t.Fatalf("register git: %v", err)
+	}
+	if err := registry.Register("s3", installS3); err != nil {
+		t.Fatalf("register s3: %v", err)
+	}
 
 	// Verify every advertised provider has an installer
 	for _, provider := range resourcetype.Providers {
