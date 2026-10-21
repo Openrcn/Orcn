@@ -112,7 +112,9 @@ func hostConfig(spec ContainerConfig) *containertypes.HostConfig {
 	// Workload ports are reached through the node-agent proxy. Do not publish
 	// them on the host: the gateway and other workloads may already use those
 	// host ports. The proxy routes directly to the container's Docker-network IP.
-	host := &containertypes.HostConfig{}
+	host := &containertypes.HostConfig{
+		NetworkMode: "infra_orcn-net",
+	}
 	for _, mount := range spec.VolumeMounts {
 		source := mount.Source
 		if source == "" {
