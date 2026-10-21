@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, RefreshCw, Trash2, Cpu, Server } from "lucide-react";
 import { Logo } from "@/components/ui/Logos";
 import { Button } from "@/components/ui/Button";
 import {
@@ -156,6 +156,18 @@ export default function ProvidersPage() {
                     Added {new Date(c.CreatedAt).toLocaleDateString()}
                   </span>
                   <div className="flex items-center gap-1">
+                    {c.Provider === "local" && (
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/providers/${c.ID}/machines`)}
+                        disabled={busyId === c.ID}
+                        title="Manage machines"
+                        className="flex items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--text-muted)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--text-main)] disabled:opacity-50"
+                      >
+                        <Server className="size-3" />
+                        Machines
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => router.push(`/providers/${c.ID}/edit`)}

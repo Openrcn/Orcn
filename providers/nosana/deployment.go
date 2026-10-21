@@ -166,6 +166,14 @@ func (c *Client) StopDeployment(deploymentID string) error {
 	return err
 }
 
+func (c *Client) StartDeploymentWithSpec(deploymentID string, spec *core.JobSpec) error {
+	return c.StartDeployment(deploymentID)
+}
+
+func (c *Client) StopDeploymentWithSpec(deploymentID string, spec *core.JobSpec) error {
+	return c.StopDeployment(deploymentID)
+}
+
 func (c *Client) UpdateTimeout(deploymentID string, timeoutMinutes int) error {
 	payload := map[string]any{"timeout": timeoutMinutes}
 	_, err := c.request("PATCH", fmt.Sprintf("/deployments/%s/update-timeout", deploymentID), payload)

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"orcn/core"
+	"orcn/core/providerconn"
 )
 
 type ProviderConfigField struct {
@@ -85,16 +86,29 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	providerID := r.URL.Query().Get("provider")
+	providerConnectionID := r.URL.Query().Get("provider_connection_id")
 
 	if providerID == "" {
 		respondError(w, http.StatusBadRequest, "Missing provider parameter")
 		return
 	}
 
-	provider, err := core.GetProvider(providerID)
-	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
-		return
+	var provider core.Provider
+	var err error
+
+	if providerConnectionID != "" {
+		// Resolve provider with connection config to get machines from secret
+		provider, err = providerconn.Resolve(r.Context(), s.DB, s.Cfg, providerID, providerConnectionID)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to resolve provider: "+err.Error())
+			return
+		}
+	} else {
+		provider, err = core.GetProvider(providerID)
+		if err != nil {
+			respondError(w, http.StatusNotFound, err.Error())
+			return
+		}
 	}
 
 	raw, err := provider.GetInstanceTypes()
@@ -126,13 +140,32 @@ func normalizeInstances(raw any, providerID string) []InstanceListing {
 		listing := normalizeInstance(m)
 
 		// Provider-specific tag attachment lives here in the backend, never in
-		// the frontend. Nosana is a GPU-only network — every listing is a GPU
-		// instance, so tag it accordingly.
+		// the frontend.
 		switch providerID {
 		case "nosana":
 			listing.DeviceType = "gpu"
 			if listing.Tag == "" {
 				listing.Tag = "GPU"
+			}
+		case "local":
+			// Use status from machine health check
+			if status, ok := m["status"].(string); ok {
+				switch status {
+				case "healthy":
+					listing.Tag = "Active"
+				case "unauthorized":
+					listing.Tag = "Unauthorized"
+				case "unreachable":
+					listing.Tag = "Unreachable"
+				default:
+					listing.Tag = "Unknown"
+				}
+			}
+			// Set device type based on GPU presence
+			if listing.GPUModel != "" || listing.VRAMGB > 0 {
+				listing.DeviceType = "gpu"
+			} else if listing.CPUCores > 0 {
+				listing.DeviceType = "cpu"
 			}
 		}
 

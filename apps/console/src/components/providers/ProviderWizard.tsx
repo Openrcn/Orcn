@@ -11,6 +11,7 @@ import {
   fetchConnections,
   fetchProviders,
   fetchSchemas,
+  fetchConnectionConfig,
   reverifyConnection,
   updateConnection,
   verifyConnectionInput,
@@ -20,6 +21,7 @@ import {
   type ProviderField,
 } from "./api";
 import { ProviderFieldInput } from "./ProviderFieldInput";
+import { JsonArrayInput } from "./JsonArrayInput";
 
 const STEPS = ["Provider", "Configuration", "Complete"];
 
@@ -87,6 +89,18 @@ export function ProviderWizard({ connectionId }: Props) {
           setName(existing.Name);
           setValues(prefilled);
           setStep(2);
+
+          // Fetch decrypted config (including secrets) for editing
+          fetchConnectionConfig(existing.ID).then((cfg) => {
+            if (!active) return;
+            schema.forEach((f) => {
+              if (f.secret && cfg.secret && cfg.secret[f.key] !== undefined) {
+                setValues((v) => ({ ...v, [f.key]: cfg.secret[f.key] }));
+              }
+            });
+          }).catch(() => {
+            // Ignore errors - secret fields will just be empty
+          });
         }
       })
       .catch((e: unknown) =>
@@ -106,7 +120,12 @@ export function ProviderWizard({ connectionId }: Props) {
   }, [providers, schemas]);
 
   const fields = useMemo(
-    () => (selected ? schemas[selected.id] || selected.schema || [] : []),
+    () => {
+      if (!selected) return [];
+      const allFields = schemas[selected.id] || selected.schema || [];
+      // Filter out "name" field from schema since we have a dedicated Connection Name input
+      return allFields.filter((f) => f.key !== "name");
+    },
     [selected, schemas],
   );
 
@@ -346,37 +365,50 @@ export function ProviderWizard({ connectionId }: Props) {
               </p>
             ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {fields.map((field) => (
-                  <div key={field.key} className="space-y-1.5">
-                    <label className="block text-xs font-medium text-[var(--dm-text-3)]">
-                      {field.name}
-                      {field.required && (
-                        <span className="ml-0.5 text-red-400">*</span>
+                {fields.map((field) => {
+                  const isArray = field.type === "json_array" || field.type === "string_array" || field.type === "number_array";
+                  return (
+                    <div key={field.key} className={`space-y-1.5 ${isArray ? "sm:col-span-2" : ""}`}>
+                      <label className="block text-xs font-medium text-[var(--dm-text-3)]">
+                        {field.name}
+                        {field.required && (
+                          <span className="ml-0.5 text-red-400">*</span>
+                        )}
+                      </label>
+                      {isArray ? (
+                        <JsonArrayInput
+                          value={values[field.key] as string}
+                          onChange={(value) => setValues((v) => ({ ...v, [field.key]: value }))}
+                          schema={field.array_item_schema || { type: "object" }}
+                          addButtonLabel={field.placeholder || "Add Item"}
+                          emptyMessage={field.description || "No items yet"}
+                        />
+                      ) : (
+                        <ProviderFieldInput
+                          field={field}
+                          value={values[field.key]}
+                          file={files[field.key] || null}
+                          onChange={(key, value) =>
+                            setValues((v) => ({ ...v, [key]: value }))
+                          }
+                          onFileChange={(key, file) =>
+                            setFiles((f) => {
+                              const next = { ...f };
+                              if (file) next[key] = file;
+                              else delete next[key];
+                              return next;
+                            })
+                          }
+                        />
                       )}
-                    </label>
-                    <ProviderFieldInput
-                      field={field}
-                      value={values[field.key]}
-                      file={files[field.key] || null}
-                      onChange={(key, value) =>
-                        setValues((v) => ({ ...v, [key]: value }))
-                      }
-                      onFileChange={(key, file) =>
-                        setFiles((f) => {
-                          const next = { ...f };
-                          if (file) next[key] = file;
-                          else delete next[key];
-                          return next;
-                        })
-                      }
-                    />
-                    {field.description && (
-                      <p className="text-[10px] text-[var(--text-light)]">
-                        {field.description}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                      {field.description && (
+                        <p className="text-[10px] text-[var(--text-light)]">
+                          {field.description}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
 

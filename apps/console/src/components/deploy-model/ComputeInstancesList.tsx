@@ -120,7 +120,7 @@ export const ComputeInstancesList: React.FC<Props> = ({
                   {i.ram_gb !== undefined && (
                     <div className="flex items-center gap-1.5 text-[var(--text-muted)]">
                       <Server className="size-3.5 text-[var(--text-light)] shrink-0" />
-                      <span>{i.ram_gb} GB RAM</span>
+                      <span>{Math.round(i.ram_gb * 10) / 10} GB RAM</span>
                     </div>
                   )}
                 </div>
@@ -149,11 +149,13 @@ export const ComputeInstancesList: React.FC<Props> = ({
                       Not Available
                     </span>
                   )
-                ) : (
+                ) : i.location ? (
                   <div className="flex items-center gap-1 text-[11px] text-[var(--text-light)]">
                     <Globe className="size-3" />
-                    <span>{i.location || "Decentralized"}</span>
+                    <span>{i.location}</span>
                   </div>
+                ) : (
+                  <span />
                 )}
                 <div className="flex items-baseline gap-0.5">
                   <span className="text-sm font-semibold text-[var(--text-main)]">

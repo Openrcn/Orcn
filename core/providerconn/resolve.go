@@ -9,6 +9,7 @@ import (
 	"orcn/core/config"
 	"orcn/core/secret"
 	"orcn/models"
+	"orcn/providers/local"
 
 	"gorm.io/gorm"
 )
@@ -63,5 +64,16 @@ func Resolve(ctx context.Context, db *gorm.DB, cfg *config.Config, providerID, c
 	if pc.Status != "verified" {
 		return nil, fmt.Errorf("provider connection %q is not verified", pc.Name)
 	}
-	return base.WithConfig(connCfg)
+
+	provider, err := base.WithConfig(connCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Inject provider context for local provider
+	if localClient, ok := provider.(*local.Client); ok {
+		localClient.SetProviderContext(connectionID, db, cfg)
+	}
+
+	return provider, nil
 }

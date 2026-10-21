@@ -84,13 +84,10 @@ func (c *Client) NewLogAdapter(deploymentID string) (core.LogAdapter, error) {
 	return adapter, nil
 }
 
-// Events returns the normalized log stream.
 func (a *nosanaLogAdapter) Events() <-chan core.LogEvent {
 	return a.events
 }
 
-// Close stops all streams and releases every underlying resource. It is
-// idempotent.
 func (a *nosanaLogAdapter) Close() error {
 	a.closeOnce.Do(a.cancel)
 	return nil

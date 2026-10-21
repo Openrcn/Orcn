@@ -237,6 +237,35 @@ func (s *Server) handleGetProviderConnection(w http.ResponseWriter, r *http.Requ
 	respondJSON(w, http.StatusOK, pc)
 }
 
+func (s *Server) handleGetProviderConnectionConfig(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	orgID := getOrgID(r)
+
+	var pc models.ProviderConnection
+	if err := s.DB.Where("id = ? AND organization_id = ?", id, orgID).First(&pc).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			respondError(w, http.StatusNotFound, "provider connection not found")
+			return
+		}
+		pcLog.Error("get provider connection: %v", err)
+		respondError(w, http.StatusInternalServerError, "failed to get provider connection")
+		return
+	}
+
+	cfg, err := s.loadConnectionConfig(r.Context(), &pc)
+	if err != nil {
+		pcLog.Error("load provider connection config: %v", err)
+		respondError(w, http.StatusInternalServerError, "failed to load provider connection config")
+		return
+	}
+
+	// Return both config and secret for editing
+	respondJSON(w, http.StatusOK, map[string]any{
+		"config": cfg.Config,
+		"secret": cfg.Secret,
+	})
+}
+
 func (s *Server) handleUpdateProviderConnection(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	orgID := getOrgID(r)
@@ -270,6 +299,10 @@ func (s *Server) handleUpdateProviderConnection(w http.ResponseWriter, r *http.R
 			break
 		}
 	}
+	// Also treat name change as credential update to sync config
+	if name, ok := raw["name"].(string); ok && name != "" {
+		hasCredentials = true
+	}
 	if hasCredentials {
 		// Merge onto existing config/secret so partial updates work.
 		existing, err := s.loadConnectionConfig(r.Context(), &pc)
@@ -289,6 +322,10 @@ func (s *Server) handleUpdateProviderConnection(w http.ResponseWriter, r *http.R
 			if k != "name" {
 				merged[k] = v
 			}
+		}
+		// Ensure config name is updated
+		if name, ok := raw["name"].(string); ok && name != "" {
+			merged["name"] = name
 		}
 
 		cfg, status, err := processAndVerify(pc.Provider, merged)

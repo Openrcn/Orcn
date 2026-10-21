@@ -41,6 +41,7 @@ type Deployment = {
   status: string;
   model: string;
   kind: string;
+  deployType: string;
   provider: string;
   resource: string;
   replicas: string;
@@ -179,6 +180,7 @@ export function DeploymentTable() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [providerFilter, setProviderFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [deployTypeFilter, setDeployTypeFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,6 +248,20 @@ export function DeploymentTable() {
     return options;
   }, [deployments]);
 
+  const deployTypeOptions = useMemo(() => {
+    const unique = new Set<string>();
+    deployments.forEach((d) => unique.add(d.deployType));
+    const items = Array.from(unique).sort();
+    const options: { label: string; value: string }[] = [
+      { label: "All types", value: "all" },
+    ];
+    options.push(...items.map((v) => ({
+      label: v === "other" ? "Other" : kindLabel(v),
+      value: v,
+    })));
+    return options;
+  }, [deployments]);
+
   useEffect(() => {
     fetch("/api/v1/deployments")
       .then((res) => res.json())
@@ -275,10 +291,17 @@ export function DeploymentTable() {
                     n.AppStatus?.toLowerCase() === "error" ||
                     n.AppStatus?.toLowerCase() === "failed",
                 ) ?? false;
-                
+
+                // Deployment was active but no node reports a live status
+                // (backend keeps nodes PENDING while the agent is unreachable).
+                const depStatus = (deployment.Status || "").toUpperCase();
+                const wasActive = ["READY", "RUNNING", "PARTIAL", "SCALING"].includes(depStatus);
+                const allDown =
+                  nodeCount > 0 && wasActive && onlineCount === 0;
+
                 if (hasErrorNode) {
                   status = "error";
-                } else if (isStopped) {
+                } else if (isStopped || allDown) {
                   status = "stopped";
                 }
                 
@@ -290,6 +313,7 @@ export function DeploymentTable() {
                   kind:
                     deployment.WorkloadType ||
                     (deployment.ModelID ? "model_inference" : "container"),
+                  deployType: (deployment.WorkloadType || "other").toLowerCase(),
                   provider: deployment.ProviderID || "-",
                   resource: deployment.InstanceName || "-",
                   replicas: `${onlineCount} / ${replicas}`,
@@ -319,6 +343,9 @@ export function DeploymentTable() {
         deployment.provider.toLowerCase().includes(providerFilter);
       const matchesType =
         typeFilter === "all" || deployment.kind === typeFilter;
+      const matchesDeployType =
+        deployTypeFilter === "all" ||
+        deployment.deployType === deployTypeFilter;
       const matchesQuery =
         !normalizedQuery ||
         [
@@ -327,9 +354,22 @@ export function DeploymentTable() {
           deployment.provider,
           deployment.resource,
         ].some((value) => value.toLowerCase().includes(normalizedQuery));
-      return matchesStatus && matchesProvider && matchesType && matchesQuery;
+      return (
+        matchesStatus &&
+        matchesProvider &&
+        matchesType &&
+        matchesDeployType &&
+        matchesQuery
+      );
     });
-  }, [deployments, providerFilter, query, statusFilter, typeFilter]);
+  }, [
+    deployments,
+    providerFilter,
+    query,
+    statusFilter,
+    typeFilter,
+    deployTypeFilter,
+  ]);
 
   const runningCount = deployments.filter(
     (deployment) => deployment.status.toLowerCase() === "running",
@@ -413,6 +453,11 @@ export function DeploymentTable() {
               items={typeOptions}
               value={typeFilter}
               onChange={setTypeFilter}
+            />
+            <FilterSelect
+              items={deployTypeOptions}
+              value={deployTypeFilter}
+              onChange={setDeployTypeFilter}
             />
           </div>
         </div>

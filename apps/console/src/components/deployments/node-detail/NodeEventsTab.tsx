@@ -53,7 +53,9 @@ export function NodeEventsTab({ deploymentId, nodeId }: Props) {
     let disposed = false;
 
     const socket = new WebSocket(
-      wsUrl(`/api/v1/deployments/${deploymentId}/nodes/${nodeId}/events`),
+      wsUrl(
+        `/api/v1/deployments/${encodeURIComponent(deploymentId)}/nodes/${encodeURIComponent(nodeId)}/events`,
+      ),
     );
 
     socket.onopen = () => {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -21,10 +22,21 @@ import (
 
 var ingressLog = logger.New("INGRESS")
 
+// slugRe matches any character that is not allowed in a route hostname.
+var slugRe = regexp.MustCompile(`[^a-z0-9-]`)
+
+// slugify produces the subdomain used for a deployment route. It must stay in
+// sync with the console helper of the same name.
+func slugify(name string) string {
+	return slugRe.ReplaceAllString(strings.ToLower(name), "-")
+}
+
 type CachedNode struct {
-	ID        string
-	TargetURL *url.URL
-	Active    int32
+	ID          string
+	TargetURL   *url.URL
+	ContainerID string
+	Port        int
+	Active      int32
 }
 
 type CachedRoute struct {
@@ -94,9 +106,16 @@ func (s *Server) syncRoutes() {
 	}
 
 	newRoutes := make(map[string]*CachedRoute)
-	
-	addNodeToRoute := func(routeName string, nodeID string, targetURL *url.URL, modelID string) {
-		routeKey := strings.ToLower(routeName)
+
+	type routeTarget struct {
+		nodeID      string
+		targetURL   *url.URL
+		containerID string
+		port        int
+	}
+
+	addNodeToRoute := func(routeName string, target routeTarget, modelID string) {
+		routeKey := slugify(routeName)
 		if _, exists := newRoutes[routeKey]; !exists {
 			newRoutes[routeKey] = &CachedRoute{
 				Name:        routeKey,
@@ -105,15 +124,19 @@ func (s *Server) syncRoutes() {
 				Balancer:    balancer.New[*CachedNode](balancer.StrategyRoundRobin),
 			}
 		}
-		
+
 		// Add node if not already present
 		for _, n := range newRoutes[routeKey].Nodes {
-			if n.ID == nodeID { return }
+			if n.ID == target.nodeID {
+				return
+			}
 		}
-		
+
 		newRoutes[routeKey].Nodes = append(newRoutes[routeKey].Nodes, &CachedNode{
-			ID:        nodeID,
-			TargetURL: targetURL,
+			ID:          target.nodeID,
+			TargetURL:   target.targetURL,
+			ContainerID: target.containerID,
+			Port:        target.port,
 		})
 	}
 
@@ -141,10 +164,11 @@ func (s *Server) syncRoutes() {
 				}
 				
 				if parsedURL0, err := url.Parse(targetURLStr0); err == nil {
+					primary := routeTarget{nodeID: node.ID, targetURL: parsedURL0, containerID: ep0.ContainerID, port: ep0.Port}
 					// Deployment wildcard: e.g. n8n.localhost
-					addNodeToRoute(d.Name, node.ID, parsedURL0, d.ModelID)
+					addNodeToRoute(d.Name, primary, d.ModelID)
 					// Direct node hash: e.g. a7f9b2c.localhost
-					addNodeToRoute(shortNodeID, node.ID, parsedURL0, d.ModelID)
+					addNodeToRoute(shortNodeID, primary, d.ModelID)
 				}
 
 				// 2. Port-Specific Routes (for multi-port containers)
@@ -157,10 +181,11 @@ func (s *Server) syncRoutes() {
 						targetURLStr = proto + "://" + ep.BaseURL
 					}
 					if parsedURL, err := url.Parse(targetURLStr); err == nil {
+						target := routeTarget{nodeID: node.ID, targetURL: parsedURL, containerID: ep.ContainerID, port: ep.Port}
 						// e.g. n8n-5678.localhost
-						addNodeToRoute(d.Name+"-"+portStr, node.ID, parsedURL, d.ModelID)
+						addNodeToRoute(d.Name+"-"+portStr, target, d.ModelID)
 						// e.g. a7f9b2c-5678.localhost
-						addNodeToRoute(shortNodeID+"-"+portStr, node.ID, parsedURL, d.ModelID)
+						addNodeToRoute(shortNodeID+"-"+portStr, target, d.ModelID)
 					}
 				}
 			}
@@ -230,6 +255,14 @@ func (s *Server) Handler() http.Handler {
 				}
 				// Trick apps into accepting secure cookies (LOOKFOR : controversial)
 				req.Header.Set("X-Forwarded-Proto", "https")
+				// Self-hosted node agents front their containers with a proxy that
+				// routes on these headers.
+				if targetNode.ContainerID != "" {
+					req.Header.Set("X-Orcn-Container", targetNode.ContainerID)
+				}
+				if targetNode.Port != 0 {
+					req.Header.Set("X-Orcn-Port", fmt.Sprintf("%d", targetNode.Port))
+				}
 			}
 			
 			proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, proxyErr error) {

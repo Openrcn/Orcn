@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strings"
 
+	"orcn/core"
 	"orcn/core/config"
 	"orcn/core/logger"
 	"orcn/models"
@@ -17,6 +19,15 @@ import (
 )
 
 var apiLog = logger.New("API")
+
+// slugRe matches any character that is not allowed in a route hostname.
+var slugRe = regexp.MustCompile(`[^a-z0-9-]`)
+
+// slugify produces the subdomain used for a deployment route. It must stay in
+// sync with the ingress helper of the same name.
+func slugify(name string) string {
+	return slugRe.ReplaceAllString(strings.ToLower(name), "-")
+}
 
 type Server struct {
 	DB     *gorm.DB
@@ -55,13 +66,26 @@ func (s *Server) withSubdomainProxy(next http.Handler) http.Handler {
 		subdomain := strings.TrimSuffix(host, "."+s.Cfg.AppDomain)
 
 		var dep models.Deployment
-		if err := s.DB.Preload("Nodes").Where("name = ? AND status IN ?", subdomain, []string{models.DeploymentReady, models.DeploymentRunning}).First(&dep).Error; err != nil {
+		var candidates []models.Deployment
+		if err := s.DB.Preload("Nodes").Where("status IN ?", []string{models.DeploymentReady, models.DeploymentRunning}).Find(&candidates).Error; err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		for _, c := range candidates {
+			if slugify(c.Name) == subdomain {
+				dep = c
+				break
+			}
+		}
+		if dep.ID == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		// Find a healthy node with an endpoint
 		var targetURL *url.URL
+		var targetContainerID string
+		var targetPort int
 		for _, node := range dep.Nodes {
 			if node.NodeURL != "" {
 				parsed, err := url.Parse(node.NodeURL)
@@ -71,20 +95,22 @@ func (s *Server) withSubdomainProxy(next http.Handler) http.Handler {
 				}
 			}
 			if node.EndpointsJSON != "" {
-				var eps []map[string]interface{}
+				var eps []core.Endpoint
 				if err := json.Unmarshal([]byte(node.EndpointsJSON), &eps); err == nil && len(eps) > 0 {
-					baseUrl := ""
-					if b, ok := eps[0]["base_url"].(string); ok { baseUrl = b }
-					
+					baseUrl := eps[0].BaseURL
 					if !strings.HasPrefix(baseUrl, "http") {
 						proto := "http"
-						if p, ok := eps[0]["protocol"].(string); ok && p != "" { proto = p }
+						if eps[0].Protocol != "" {
+							proto = eps[0].Protocol
+						}
 						baseUrl = fmt.Sprintf("%s://%s", proto, baseUrl)
 					}
-					
+
 					parsed, err := url.Parse(baseUrl)
 					if err == nil {
 						targetURL = parsed
+						targetContainerID = eps[0].ContainerID
+						targetPort = eps[0].Port
 						break
 					}
 				}
@@ -111,6 +137,12 @@ func (s *Server) withSubdomainProxy(next http.Handler) http.Handler {
 				req.Header.Set("Origin", targetURL.Scheme+"://"+targetURL.Host)
 			}
 			req.Header.Set("X-Forwarded-Proto", "https")
+			if targetContainerID != "" {
+				req.Header.Set("X-Orcn-Container", targetContainerID)
+			}
+			if targetPort != 0 {
+				req.Header.Set("X-Orcn-Port", fmt.Sprintf("%d", targetPort))
+			}
 		}
 		
 		r.Header.Set("X-Forwarded-Host", host)
@@ -157,9 +189,16 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/provider-connections/schema", s.handleGetProviderConnectionSchema)
 	s.mux.HandleFunc("POST /api/v1/provider-connections/verify", s.handleVerifyProviderConnection)
 	s.mux.HandleFunc("GET /api/v1/provider-connections/{id}", s.handleGetProviderConnection)
+	s.mux.HandleFunc("GET /api/v1/provider-connections/{id}/config", s.handleGetProviderConnectionConfig)
 	s.mux.HandleFunc("PUT /api/v1/provider-connections/{id}", s.handleUpdateProviderConnection)
 	s.mux.HandleFunc("POST /api/v1/provider-connections/{id}/verify", s.handleVerifyProviderConnectionByID)
 	s.mux.HandleFunc("DELETE /api/v1/provider-connections/{id}", s.handleDeleteProviderConnection)
+
+	// Machine routes
+	s.mux.HandleFunc("GET /api/v1/provider-connections/{id}/machines", s.handleListMachines)
+	s.mux.HandleFunc("POST /api/v1/provider-connections/{id}/machines", s.handleCreateMachine)
+	s.mux.HandleFunc("PUT /api/v1/provider-connections/{id}/machines/{machineId}", s.handleUpdateMachine)
+	s.mux.HandleFunc("DELETE /api/v1/provider-connections/{id}/machines/{machineId}", s.handleDeleteMachine)
 
 	s.mux.HandleFunc("GET /api/v1/organizations", s.handleListOrganizations)
 	s.mux.HandleFunc("GET /api/v1/organizations/{id}", s.handleGetOrganization)
@@ -173,7 +212,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/endpoints", s.handleListEndpoints)
 	
 	// Internal service endpoints
-	s.mux.HandleFunc("GET /api/v1/internal/routes", s.handleGetInternalRoutes)
+	// TODO Polling -> WebSockets|sse or ?watch=true
+	s.mux.HandleFunc("GET /api/v1/internal/routes", s.handleGetInternalRoutes) 
 }
 
 func respondJSON(w http.ResponseWriter, status int, data any) {

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/Button";
 import { InfoRow } from "@/components/deployments/detail/InfoRow";
 import { Logo, getLogoCategory } from "@/components/ui/Logos";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { getDerivedDeploymentStatus } from "@/lib/deployment-status";
 
 type OverviewTabProps = {
   deployment: any;
@@ -146,9 +147,8 @@ export function OverviewTab({
     return `${scheme()}://${slug}-${port}.${host}`;
   };
   const publicCount = specPorts.filter((p) => p.isPublic).length;
-  const isRunning = ["RUNNING", "READY"].includes(
-    String(deployment.Status || "").toUpperCase(),
-  );
+  const derivedStatus = getDerivedDeploymentStatus(deployment, nodes);
+  const isRunning = ["RUNNING", "READY"].includes(derivedStatus);
 
   return (
     <div className="space-y-3">
@@ -209,8 +209,8 @@ export function OverviewTab({
           <InfoRow
             label="Status"
             value={
-              <Badge variant={statusVariant(deployment.Status)}>
-                {deployment.Status}
+              <Badge variant={statusVariant(derivedStatus)}>
+                {derivedStatus}
               </Badge>
             }
           />
@@ -283,8 +283,8 @@ export function OverviewTab({
             </div>
           </div>
 
-          {/* Active Nodes */}
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-4">
+          {/* Active Nodes Preview */}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-4 flex flex-col overflow-y-auto flex-1 max-h-[calc(100vh_56px_3rem_1.5rem)]">
             <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-2.5">
               <div>
                 <h2 className="text-sm font-bold text-[var(--text-main)]">
@@ -302,54 +302,68 @@ export function OverviewTab({
                 View all
               </Button>
             </div>
-            <div className="space-y-1.5">
+            <div className="flex-1 space-y-1.5 overflow-y-auto">
               {nodes.length === 0 ? (
                 <div className="rounded border border-dashed border-[var(--border)] p-3 text-center text-xs text-[var(--text-muted)]">
                   Nodes will appear when registered.
                 </div>
               ) : (
-                nodes.slice(0, 3).map((node: any) => (
-                  <div
-                    key={node.ID}
-                    className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--surface-hover)] px-3 py-2 text-xs"
-                  >
-                    <div className="flex items-center gap-2 font-mono text-[var(--text-main)]">
-                      <span
-                        className={[
-                          "size-1.5 rounded-full",
-                          statusVariant(node.InfraStatus || "UNKNOWN") ===
-                          "success"
-                            ? "bg-emerald-500"
-                            : statusVariant(node.InfraStatus || "UNKNOWN") ===
-                                "warning"
-                              ? "bg-amber-500"
+                <div className="grid gap-1">
+                  {nodes.slice(0, 2).map((node: any) => (
+                    <div
+                      key={node.ID}
+                      className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--surface-hover)] px-3 py-2 text-xs"
+                    >
+                      <div className="flex items-center gap-2 font-mono text-[var(--text-main)]">
+                        <span
+                          className={[
+                            "size-1.5 rounded-full",
+                            statusVariant(node.InfraStatus || "UNKNOWN") ===
+                            "success"
+                              ? "bg-emerald-500"
                               : statusVariant(node.InfraStatus || "UNKNOWN") ===
-                                  "error"
-                                ? "bg-red-500"
-                                : "bg-[var(--text-muted)]",
-                        ].join(" ")}
-                      />
-                      <Logo
-                        name={
-                          node.ProviderID || deployment.ProviderID || "nosana"
-                        }
-                        size={13}
-                      />
-                      <span className="text-[var(--text-muted)]">:</span>
-                      <span>{node.ID}</span>
+                                  "warning"
+                                ? "bg-amber-500"
+                                : statusVariant(node.InfraStatus || "UNKNOWN") ===
+                                    "error"
+                                  ? "bg-red-500"
+                                  : "bg-[var(--text-muted)]",
+                          ].join(" ")}
+                        />
+                        <Logo
+                          name={
+                            node.ProviderID || deployment.ProviderID || "nosana"
+                          }
+                          size={13}
+                        />
+                        <span className="text-[var(--text-muted)]">:</span>
+                        <span>{node.ID}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <CopyButton value={node.ID} size={12} />
+                        <Link
+                          href={`/deployments/${deployment.ID}/nodes/${node.ID}`}
+                          className="rounded p-1 text-[var(--text-muted)] transition hover:bg-[var(--card-bg)] hover:text-[var(--text-main)]"
+                          title="Open node details"
+                        >
+                          <ArrowUpRight className="size-3.5" />
+                        </Link>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <CopyButton value={node.ID} size={12} />
-                      <Link
-                        href={`/deployments/${deployment.ID}/nodes/${node.ID}`}
-                        className="rounded p-1 text-[var(--text-muted)] transition hover:bg-[var(--card-bg)] hover:text-[var(--text-main)]"
-                        title="Open node details"
+                  ))}
+                  {nodes.length > 2 && (
+                    <div key="extra-nodes">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-center rounded border border-[var(--border)] bg-[var(--surface-hover)] p-2.5 text-left transition hover:border-[var(--border-hover)]"
                       >
-                        <ArrowUpRight className="size-3.5" />
-                      </Link>
+                        <span className="text-[11px] font-medium text-[var(--text-main)]">
+                          +{nodes.length - 2} more
+                        </span>
+                      </button>
                     </div>
-                  </div>
-                ))
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -357,7 +371,7 @@ export function OverviewTab({
       </div>
 
       {/* Endpoints + Quick Actions side by side */}
-      <div className="grid items-start gap-3 lg:grid-cols-2">
+      <div className="grid items-start gap-3 lg:grid-cols-[1fr_1.3fr]">
       {/* Endpoints — reserved gateway URL per declared port */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-4">
         <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-2.5">
@@ -452,62 +466,25 @@ export function OverviewTab({
         )}
       </div>
 
-      {/* Quick Actions */}
+      {/* Events placeholder */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-4">
         <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-2.5">
-          <div className="flex items-center gap-2">
-            <Zap size={14} className="text-[var(--text-muted)]" />
+          <div>
             <h2 className="text-sm font-bold text-[var(--text-main)]">
-              Quick Actions
+              Events
             </h2>
           </div>
           <span className="text-[11px] text-[var(--text-muted)]">
-            Common deployment tasks
+            Live container output
           </span>
         </div>
-        <div className="grid gap-2">
-          {[
-            {
-              tab: "api",
-              icon: Terminal,
-              label: "API Integration",
-              sub: "Endpoints & code snippets",
-            },
-            {
-              tab: "replicas",
-              icon: Server,
-              label: "Inspect Replicas",
-              sub: "Node hardware & status",
-            },
-            {
-              tab: "configuration",
-              icon: Boxes,
-              label: "View Spec",
-              sub: "Raw payload & configuration",
-            },
-          ].map(({ tab, icon: Icon, label, sub }) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => onOpenTab(tab)}
-              className="flex items-center gap-2.5 rounded border border-[var(--border)] bg-[var(--surface-hover)] p-2.5 text-left transition hover:border-[var(--border-hover)]"
-            >
-              <div className="flex size-7 shrink-0 items-center justify-center rounded border border-[var(--border)] bg-[var(--card-bg)] text-[var(--text-muted)]">
-                <Icon size={13} />
-              </div>
-              <div className="min-w-0">
-                <span className="block text-xs font-semibold text-[var(--text-main)]">
-                  {label}
-                </span>
-                <span className="block truncate text-[11px] text-[var(--text-muted)]">
-                  {sub}
-                </span>
-              </div>
-            </button>
-          ))}
+        <div className="space-y-1.5 p-3">
+          <div className="rounded border border-dashed border-[var(--border)] px-3 py-3 text-center text-[11px] text-[var(--text-muted)]">
+            Events will appear here when the node is running.
+          </div>
         </div>
       </div>
-      </div>
     </div>
+  </div>
   );
 }

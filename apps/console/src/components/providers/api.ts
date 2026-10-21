@@ -1,13 +1,20 @@
+export interface ArrayItemSchema {
+  type: "object" | "string" | "number" | "boolean";
+  properties?: Record<string, { type: string; label?: string; placeholder?: string }>;
+  required?: string[];
+}
+
 export interface ProviderField {
   key: string;
   name: string;
   description?: string;
-  type: "text" | "password" | "number" | "boolean" | "select" | "file" | string;
+  type: "text" | "password" | "number" | "boolean" | "select" | "file" | "json_array" | "string_array" | "number_array" | string;
   required: boolean;
   secret: boolean;
   default?: string;
   placeholder?: string;
   options?: string[];
+  array_item_schema?: ArrayItemSchema;
 }
 
 export interface ProviderCapability {
@@ -30,6 +37,26 @@ export interface ProviderConnection {
   Status: string;
   Config: string;
   CredentialSecretID?: string | null;
+  CreatedAt: string;
+  UpdatedAt: string;
+}
+
+export interface Machine {
+  ID: string;
+  ProviderConnectionID: string;
+  Name: string;
+  Endpoint: string;
+  ProxyEndpoint: string;
+  TokenSecretID: string | null;
+  Status: string;
+  LastSeen: string | null;
+  CPUArch: string | null;
+  CPUCores: number;
+  MemoryGB: number;
+  GPUModel: string | null;
+  GPUVRAMGB: number;
+  StorageGB: number;
+  Labels: string | null;
   CreatedAt: string;
   UpdatedAt: string;
 }
@@ -172,9 +199,51 @@ export async function deleteConnection(id: string): Promise<void> {
   await parse<unknown>(res);
 }
 
+export async function fetchConnectionConfig(id: string): Promise<{ config: Record<string, any>; secret: Record<string, any> }> {
+  const res = await fetch(`${CONNECTIONS}/${id}/config`);
+  return parse<{ config: Record<string, any>; secret: Record<string, any> }>(res);
+}
+
 export function providerLabel(id: string): string {
   return id
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim();
+}
+
+export async function fetchConnectionMachines(connectionId: string): Promise<{ machines: Machine[] }> {
+  const res = await fetch(`${CONNECTIONS}/${connectionId}/machines`);
+  return parse<{ machines: Machine[] }>(res);
+}
+
+export async function createMachine(
+  connectionId: string,
+  data: { name: string; endpoint: string; proxy_endpoint?: string; token: string },
+): Promise<Machine> {
+  const res = await fetch(`${CONNECTIONS}/${connectionId}/machines`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return parse<Machine>(res);
+}
+
+export async function updateMachine(
+  connectionId: string,
+  machineId: string,
+  data: { name?: string; endpoint?: string; proxy_endpoint?: string; token?: string },
+): Promise<Machine> {
+  const res = await fetch(`${CONNECTIONS}/${connectionId}/machines/${machineId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return parse<Machine>(res);
+}
+
+export async function deleteMachine(connectionId: string, machineId: string): Promise<void> {
+  const res = await fetch(`${CONNECTIONS}/${connectionId}/machines/${machineId}`, {
+    method: "DELETE",
+  });
+  await parse<unknown>(res);
 }

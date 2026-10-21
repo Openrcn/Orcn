@@ -105,7 +105,16 @@ export default function NodeDetailPage(props: {
       opts?.container ? { container: opts.container } : undefined,
     );
 
+  const decodeParam = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  };
+
   useEffect(() => {
+    const targetNodeId = decodeParam(params.nodeId);
     const fetchNode = () => {
       fetch(`/api/v1/deployments/${params.id}`)
         .then((res) => {
@@ -114,7 +123,9 @@ export default function NodeDetailPage(props: {
         })
         .then((data: DeploymentRecord) => {
           setDeployment(data);
-          const found = (data.Nodes || []).find((n) => n.ID === params.nodeId);
+          const found = (data.Nodes || []).find(
+            (n) => n.ID === targetNodeId || n.ID === params.nodeId,
+          );
           if (found) {
             setNode(found);
             setError("");

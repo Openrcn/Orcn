@@ -59,20 +59,30 @@ function buildEndpoints(deployment: any, node: any): NodeEndpoint[] {
 
   if (node.EndpointsJSON) {
     try {
+      const nodeSlug = shortNodeId(node.ID);
       const parsed = JSON.parse(node.EndpointsJSON);
       if (Array.isArray(parsed)) {
         for (const e of parsed) {
           const protocol = e?.protocol || "http";
+          const port = e?.port ?? "-";
           const raw = String(e?.base_url || "");
-          const url = !raw
-            ? ""
-            : /^https?:\/\//i.test(raw)
+          // Self-hosted endpoints point at the node-agent's internal proxy
+          // (carry a container_id). Show this node's own ingress URL instead
+          // of leaking the internal address.
+          const isProxy = Boolean(e?.container_id) || !raw;
+          const friendly =
+            port !== "-" && Number(port) !== 0
+              ? `http://${nodeSlug}-${port}.localhost`
+              : `http://${nodeSlug}.localhost`;
+          const rawUrl = raw
+            ? /^https?:\/\//i.test(raw)
               ? raw
-              : `${protocol}://${raw}`;
+              : `${protocol}://${raw}`
+            : friendly;
           out.push({
-            port: e?.port ?? "-",
+            port,
             protocol,
-            url: url || `http://${shortNodeId(node.ID)}.localhost`,
+            url: isProxy ? friendly : rawUrl,
           });
         }
       }

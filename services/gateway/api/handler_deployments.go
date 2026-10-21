@@ -130,10 +130,16 @@ func (s *Server) handleCreateDeployment(w http.ResponseWriter, r *http.Request) 
 			break
 		}
 
+		// For local provider, use instanceTypeID (machine ID) as ProviderID
+		nodeProviderID := req.ProviderID
+		if req.ProviderID == "local" {
+			nodeProviderID = req.InstanceTypeID
+		}
+
 		node := models.Node{
 			ID:           providerJobID,
 			DeploymentID: deploymentID,
-			ProviderID:   req.ProviderID,
+			ProviderID:   nodeProviderID,
 			InfraStatus:  models.InfraPending,
 			AppStatus:    models.AppPending,
 		}
@@ -233,6 +239,12 @@ func (s *Server) handleDeploymentAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	var spec core.JobSpec
+	if err := json.Unmarshal([]byte(dep.JobSpecJSON), &spec); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to parse job spec: "+err.Error())
+		return
+	}
+
 	var req actionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -244,9 +256,17 @@ func (s *Server) handleDeploymentAction(w http.ResponseWriter, r *http.Request) 
 		var actionErr error
 		switch req.Action {
 		case "start":
-			actionErr = provider.StartDeployment(node.ID)
+			if p, ok := provider.(interface{ StartDeploymentWithSpec(string, *core.JobSpec) error }); ok {
+				actionErr = p.StartDeploymentWithSpec(node.ID, &spec)
+			} else {
+				actionErr = provider.StartDeployment(node.ID)
+			}
 		case "stop":
-			actionErr = provider.StopDeployment(node.ID)
+			if p, ok := provider.(interface{ StopDeploymentWithSpec(string, *core.JobSpec) error }); ok {
+				actionErr = p.StopDeploymentWithSpec(node.ID, &spec)
+			} else {
+				actionErr = provider.StopDeployment(node.ID)
+			}
 		case "update_timeout":
 			if req.TimeoutMinutes == 0 {
 				respondError(w, http.StatusBadRequest, "timeout_minutes required for update_timeout action")
@@ -424,10 +444,15 @@ func (s *Server) handleCreateWorkload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
+		nodeProviderID := req.ProviderID
+		if req.ProviderID == "local" {
+			nodeProviderID = req.InstanceTypeID
+		}
+
 		node := models.Node{
 			ID:           providerJobID,
 			DeploymentID: deploymentID,
-			ProviderID:   req.ProviderID,
+			ProviderID:   nodeProviderID,
 			InfraStatus:  models.InfraPending,
 			AppStatus:    models.AppPending,
 		}

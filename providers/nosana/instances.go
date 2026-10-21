@@ -10,12 +10,8 @@ import (
 	"strings"
 )
 
-// getAvailableNodes queries the Nosana on-chain program and returns
-// a map of market address → queued node count (only NODE_QUEUE markets with >0 nodes).
+// TODO fnd reliable way or wait for official nosana support for availability in /markets endpoint. Until then, we query the Solana RPC directly to get the queue length for each market.
 func (c *Client) getAvailableNodes() map[string]int {
-	// Market account binary layout offsets (little-endian):
-	// 146: queueType (1 byte) — 1 = NODE_QUEUE
-	// 147: queue length prefix (4 bytes uint32 LE)
 	const (
 		rpcURL    = "https://rpc.ironforge.network/mainnet?apiKey=01J4RYMAWZC65B6CND9DTZZ5BK"
 		programID = "nosJhNRqr2bc9g1nfGDcXXTXvYUmxD4cVwy2pMWhrYM"

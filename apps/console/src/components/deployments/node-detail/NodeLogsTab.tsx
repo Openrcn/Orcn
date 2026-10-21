@@ -60,7 +60,9 @@ export function NodeLogsTab({
     let disposed = false;
 
     const socket = new WebSocket(
-      wsUrl(`/api/v1/deployments/${deploymentId}/nodes/${nodeId}/logs`),
+      wsUrl(
+        `/api/v1/deployments/${encodeURIComponent(deploymentId)}/nodes/${encodeURIComponent(nodeId)}/logs`,
+      ),
     );
 
     socket.onopen = () => {

@@ -166,7 +166,11 @@ export function useCreateWorkload() {
   }, []);
 
   useEffect(() => {
-    fetch(`/api/v1/instances?provider=${formData.provider}`)
+    const provider = formData.provider;
+    const connId = formData.providerConnectionId;
+    let url = `/api/v1/instances?provider=${provider}`;
+    if (connId) url += `&provider_connection_id=${connId}`;
+    fetch(url)
       .then((res) => res.json())
       .then((json) => {
         if (json.instances && Array.isArray(json.instances)) {
@@ -176,7 +180,7 @@ export function useCreateWorkload() {
         }
       })
       .catch(console.error);
-  }, [formData.provider]);
+  }, [formData.provider, formData.providerConnectionId]);
 
   const handleTemplateSelect = (id: string) => {
     if (!id) {

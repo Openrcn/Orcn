@@ -92,3 +92,10 @@ export function SectionCard({
 export function shortNodeId(id: string) {
   return id.length > 8 ? id.slice(0, 8) : id;
 }
+
+// Must match the gateway ingress slug rules ([^a-z0-9-] -> "-").
+export function slugifyDeployment(name: string) {
+  return String(name || "deployment")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-");
+}

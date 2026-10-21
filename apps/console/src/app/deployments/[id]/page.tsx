@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { getDerivedDeploymentStatus } from "@/lib/deployment-status";
+
 import { Badge } from "@/components/ui/Badge";
 import {
   DropdownMenu,
@@ -116,6 +118,8 @@ export default function DeploymentDetailPage(props: {
     }
   };
 
+  const getDeploymentStatus = getDerivedDeploymentStatus;
+
   const statusVariant = (status: string) => {
     const value = status?.toUpperCase();
     if (value === "RUNNING" || value === "READY") return "success";
@@ -199,9 +203,9 @@ export default function DeploymentDetailPage(props: {
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge variant={statusVariant(deployment.Status)}>
-            {deployment.Status}
-          </Badge>
+<Badge variant={statusVariant(getDeploymentStatus(deployment, nodes))}>
+              {getDeploymentStatus(deployment, nodes)}
+</Badge>
 
           <DropdownMenu>
             <DropdownMenuTrigger className="inline-flex items-center justify-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-main)] transition hover:border-[var(--border-hover)] hover:bg-[var(--surface-hover)]">
@@ -216,7 +220,7 @@ export default function DeploymentDetailPage(props: {
                   <RotateCcw className="mr-2 size-4" />
                   Restart
                 </DropdownMenuItem>
-                {deployment.Status !== "STOPPED" ? (
+                {getDerivedDeploymentStatus(deployment, nodes) !== "STOPPED" ? (
                   <DropdownMenuItem
                     onClick={() => handleAction("stop")}
                     disabled={actionLoading}

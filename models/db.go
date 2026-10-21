@@ -26,7 +26,7 @@ func InitDB(filepath string) (*gorm.DB, error) {
 		}
 	}
 
-	err = db.AutoMigrate(&Deployment{}, &Node{}, &Job{}, &Secret{}, &Template{}, &Registry{}, &RouteEndpoint{}, &ProviderConnection{}, &Organization{})
+	err = db.AutoMigrate(&Deployment{}, &Node{}, &Job{}, &Secret{}, &Template{}, &Registry{}, &RouteEndpoint{}, &ProviderConnection{}, &Organization{}, &Machine{})
 	if err != nil {
 		return nil, err
 	}

@@ -140,8 +140,18 @@ func (s *AdminServer) requireRegistered(w http.ResponseWriter) bool {
 	return true
 }
 
+// authorizedToRegister returns true when the caller may register/unregister.
+// The admin token (enforced by the auth middleware) grants control-plane
+// access; the registration key is only required when no admin token is set.
+func (s *AdminServer) authorizedToRegister(r *http.Request) bool {
+	if s.token != "" {
+		return true
+	}
+	return s.registrationKey != "" && r.Header.Get("X-Registration-Key") == s.registrationKey
+}
+
 func (s *AdminServer) register(w http.ResponseWriter, r *http.Request) {
-	if s.registrationKey == "" || r.Header.Get("X-Registration-Key") != s.registrationKey {
+	if !s.authorizedToRegister(r) {
 		writeError(w, http.StatusUnauthorized, "valid registration API key required")
 		return
 	}
@@ -367,7 +377,7 @@ func (s *AdminServer) registrations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *AdminServer) unregister(w http.ResponseWriter, r *http.Request) {
-	if s.registrationKey == "" || r.Header.Get("X-Registration-Key") != s.registrationKey {
+	if !s.authorizedToRegister(r) {
 		writeError(w, http.StatusUnauthorized, "valid registration API key required")
 		return
 	}

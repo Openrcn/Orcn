@@ -2,12 +2,11 @@ package nosana
 
 import (
 	"fmt"
-	"strings"
 
 	"orcn/core"
+	"orcn/pkg/util"
 )
 
-// ConnectionSchema returns the fields required to connect a Nosana account.
 func (c *Client) ConnectionSchema() []core.ProviderField {
 	return []core.ProviderField{
 		{
@@ -31,15 +30,14 @@ func (c *Client) ConnectionSchema() []core.ProviderField {
 	}
 }
 
-// ProcessConnection splits raw user input into raw config and secret material.
 func (c *Client) ProcessConnection(raw map[string]any) (*core.ProviderConnectionConfig, error) {
-	apiKey := stringValue(raw["api_key"])
+	apiKey := util.StringValue(raw["api_key"])
 	if apiKey == "" {
 		return nil, fmt.Errorf("api_key is required")
 	}
 
 	config := map[string]any{}
-	if base := stringValue(raw["base_url"]); base != "" {
+	if base := util.StringValue(raw["base_url"]); base != "" {
 		config["base_url"] = base
 	}
 
@@ -49,19 +47,18 @@ func (c *Client) ProcessConnection(raw map[string]any) (*core.ProviderConnection
 	}, nil
 }
 
-// VerifyConnection pings Nosana with the supplied credentials.
 func (c *Client) VerifyConnection(cfg *core.ProviderConnectionConfig) error {
 	if cfg == nil || cfg.Secret == nil {
 		return fmt.Errorf("missing credentials")
 	}
-	apiKey := stringValue(cfg.Secret["api_key"])
+	apiKey := util.StringValue(cfg.Secret["api_key"])
 	if apiKey == "" {
 		return fmt.Errorf("api_key is required")
 	}
 
 	baseURL := ""
 	if cfg.Config != nil {
-		baseURL = stringValue(cfg.Config["base_url"])
+		baseURL = util.StringValue(cfg.Config["base_url"])
 	}
 
 	client := New(baseURL)
@@ -77,14 +74,14 @@ func (c *Client) WithConfig(cfg *core.ProviderConnectionConfig) (core.Provider, 
 	if cfg == nil || cfg.Secret == nil {
 		return nil, fmt.Errorf("missing credentials")
 	}
-	apiKey := stringValue(cfg.Secret["api_key"])
+	apiKey := util.StringValue(cfg.Secret["api_key"])
 	if apiKey == "" {
 		return nil, fmt.Errorf("api_key is required")
 	}
 
 	baseURL := ""
 	if cfg.Config != nil {
-		baseURL = stringValue(cfg.Config["base_url"])
+		baseURL = util.StringValue(cfg.Config["base_url"])
 	}
 	if baseURL == "" {
 		baseURL = c.BaseURL
@@ -93,11 +90,4 @@ func (c *Client) WithConfig(cfg *core.ProviderConnectionConfig) (core.Provider, 
 	client := New(baseURL)
 	client.APIKey = apiKey
 	return client, nil
-}
-
-func stringValue(v any) string {
-	if s, ok := v.(string); ok {
-		return strings.TrimSpace(s)
-	}
-	return ""
 }
