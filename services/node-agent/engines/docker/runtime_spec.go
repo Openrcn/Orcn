@@ -7,6 +7,7 @@ import (
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"orcn/core"
+	"orcn/pkg/resourcetype"
 )
 
 type ContainerConfig struct {
@@ -155,14 +156,17 @@ func ValidateConfig(spec ContainerConfig) error {
 		}
 	}
 	for _, resource := range spec.Resources {
-		if !strings.EqualFold(resource.Type, "http") {
-			return fmt.Errorf("unsupported resource type %q; only HTTP resources are supported", resource.Type)
+		specMap := map[string]any{
+			"url":    resource.URL,
+			"target": resource.Target,
 		}
-		if strings.TrimSpace(resource.URL) == "" && len(resource.Config) == 0 {
-			return fmt.Errorf("resource URL or config is required")
+		if resource.Config != nil {
+			for k, v := range resource.Config {
+				specMap[k] = v
+			}
 		}
-		if resource.VolumeName == "" && strings.TrimSpace(resource.Target) == "" {
-			return fmt.Errorf("resource target or volume_name/path is required")
+		if err := resourcetype.ValidateResource(resource.Type, specMap); err != nil {
+			return fmt.Errorf("%v", err)
 		}
 	}
 	for _, mount := range spec.VolumeMounts {

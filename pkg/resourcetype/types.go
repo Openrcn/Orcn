@@ -1,5 +1,11 @@
 package resourcetype
 
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
 type ProviderField struct {
 	Name        string `json:"name"`
 	Label       string `json:"label"`
@@ -15,6 +21,7 @@ type Provider struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Fields      []ProviderField `json:"fields"`
+	Validator   func(map[string]any) error `json:"-"`
 }
 
 var Providers = []Provider{
@@ -84,6 +91,15 @@ var Providers = []Provider{
 				Required:    true,
 				SpecKey:     "target",
 			},
+		},
+		Validator: func(spec map[string]any) error {
+			if url, ok := spec["url"].(string); ok && url != "" {
+				matched, _ := regexp.MatchString(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`, url)
+				if !matched {
+					return fmt.Errorf("HF resource url must use 'org/repo' format (e.g., 'runwayml/stable-diffusion-v1-5')")
+				}
+			}
+			return nil
 		},
 	},
 	{
@@ -161,6 +177,14 @@ var Providers = []Provider{
 				Required:    true,
 				SpecKey:     "target",
 			},
+		},
+		Validator: func(spec map[string]any) error {
+			if url, ok := spec["url"].(string); ok && url != "" {
+				if !strings.HasSuffix(url, ".git") && !strings.Contains(url, "github.com") && !strings.Contains(url, "gitlab.com") {
+					return fmt.Errorf("GIT resource url does not look like a valid git URL")
+				}
+			}
+			return nil
 		},
 	},
 	{

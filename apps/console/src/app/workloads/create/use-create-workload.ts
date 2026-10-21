@@ -22,10 +22,17 @@ interface ContainerInput {
   mounts?: { volumeName: string; mountPath: string }[];
   resources?: {
     type: string;
-    url: string;
-    target: string;
+    url?: string;
+    target?: string;
     filesFilter?: string;
     files?: string[];
+    config?: {
+      content?: string;
+      permissions?: string;
+    };
+    // Flat fields from UI (backwards compat)
+    content?: string;
+    permissions?: string;
   }[];
 }
 
@@ -80,12 +87,18 @@ function mapTemplateToForm(parsed: any) {
           volumeName: m.volume_name || "",
           mountPath: m.mount_path || "",
         })),
-        resources: (args.resources || []).map((r: any) => ({
-          type: (r.type || "hf").toLowerCase(),
-          url: r.url || "",
-          target: r.target || "",
-          files: Array.isArray(r.files) ? r.files : [],
-        })),
+        resources: (args.resources || []).map((r: any) => {
+          const mapped: any = {
+            type: (r.type || "hf").toLowerCase(),
+            url: r.url || "",
+            target: r.target || "",
+            files: Array.isArray(r.files) ? r.files : [],
+          };
+          if (r.config) {
+            mapped.config = r.config;
+          }
+          return mapped;
+        }),
       };
     }),
   };
@@ -266,18 +279,36 @@ export function useCreateWorkload() {
           }));
 
         const resources = (c.resources || [])
-          .filter((r) => r.url && r.target)
-          .map((r) => ({
-            type: r.type,
-            url: r.url,
-            target: r.target,
-            files: Array.isArray(r.files)
-              ? r.files
-              : (r.filesFilter || "")
-                  .split(",")
-                  .map((f: string) => f.trim())
-                  .filter((f: string) => f),
-          }));
+          .filter((r) => {
+            if (r.type === "file") {
+              const hasContent = r.config?.content || r.content;
+              return hasContent && r.target;
+            }
+            return r.url && r.target;
+          })
+          .map((r) => {
+            if (r.type === "file") {
+              return {
+                type: r.type,
+                target: r.target,
+                config: {
+                  content: r.config?.content || r.content || "",
+                  permissions: r.config?.permissions || r.permissions || "0644",
+                },
+              };
+            }
+            return {
+              type: r.type,
+              url: r.url,
+              target: r.target,
+              files: Array.isArray(r.files)
+                ? r.files
+                : (r.filesFilter || "")
+                    .split(",")
+                    .map((f: string) => f.trim())
+                    .filter((f: string) => f),
+            };
+          });
 
         const args: any = {
           image: c.image || "ubuntu:latest",

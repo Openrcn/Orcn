@@ -93,6 +93,11 @@ docker-node-agent:
 	@docker build -t orcn/node-agent:latest -f services/node-agent/Dockerfile .
 	@echo "Docker image built: orcn/node-agent:latest"
 
+docker-resource-loader:
+	@echo "Building Resource Loader Docker image..."
+	@docker build -t vinitngr/orcn-resource-loader:dev -f services/node-agent/resource-loader/Dockerfile .
+	@echo "Docker image built: vinitngr/orcn-resource-loader:dev"
+
 docker-gateway:
 	@echo "Building Gateway Docker image..."
 	@docker build -t orcn/gateway:latest -f services/gateway/Dockerfile .

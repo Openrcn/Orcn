@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
+
+	"orcn/pkg/resourcetype"
 )
 
 type TemplateSpecV2 struct {
@@ -39,10 +40,11 @@ type TemplateSpecV2 struct {
 				IsPublic bool   `json:"is_public"`
 			} `json:"expose"`
 			Resources []struct {
-				Type   string   `json:"type"`
-				URL    string   `json:"url"`
-				Target string   `json:"target"`
-				Files  []string `json:"files,omitempty"`
+				Type   string         `json:"type"`
+				URL    string         `json:"url"`
+				Target string         `json:"target"`
+				Files  []string       `json:"files,omitempty"`
+				Config map[string]any `json:"config,omitempty"`
 			} `json:"resources"`
 		} `json:"args"`
 	} `json:"containers"`
@@ -273,31 +275,36 @@ func ValidateJobSpecStruct(spec *TemplateSpecV2) (bool, []string) {
 		for j, r := range c.Args.Resources {
 			if r.Type == "" {
 				errors = append(errors, fmt.Sprintf("Container '%s' resource at index %d is missing 'type'", c.ID, j))
-			} else {
-				t := strings.ToUpper(r.Type)
-				if t != "HF" && t != "S3" && t != "HTTP" && t != "GIT" {
-					errors = append(errors, fmt.Sprintf("Container '%s' resource %d has unsupported type '%s'", c.ID, j, r.Type))
+				continue
+			}
+
+			provider := resourcetype.FindProvider(r.Type)
+			if provider == nil {
+				errors = append(errors, fmt.Sprintf("Container '%s' resource %d has unsupported type '%s'", c.ID, j, r.Type))
+				continue
+			}
+
+			spec := map[string]any{
+				"url":         r.URL,
+				"target":      r.Target,
+				"bucket":      r.Config["bucket"],
+				"key":         r.Config["key"],
+				"endpoint":    r.Config["endpoint"],
+				"region":      r.Config["region"],
+				"access_key_id": r.Config["access_key_id"],
+				"secret_access_key": r.Config["secret_access_key"],
+				"revision":    r.Config["revision"],
+				"token":       r.Config["token"],
+			}
+
+			if r.Config != nil {
+				for k, v := range r.Config {
+					spec[k] = v
 				}
 			}
 
-			if r.Target == "" {
-				errors = append(errors, fmt.Sprintf("Container '%s' resource at index %d is missing 'target' path", c.ID, j))
-			}
-
-			if r.URL == "" {
-				errors = append(errors, fmt.Sprintf("Container '%s' resource at index %d is missing 'url'", c.ID, j))
-			} else {
-				// Specific validations
-				if strings.ToUpper(r.Type) == "HF" {
-					matched, _ := regexp.MatchString(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`, r.URL)
-					if !matched {
-						errors = append(errors, fmt.Sprintf("Container '%s' HF resource at index %d must use 'org/repo' format (e.g., 'runwayml/stable-diffusion-v1-5')", c.ID, j))
-					}
-				} else if strings.ToUpper(r.Type) == "GIT" {
-					if !strings.HasSuffix(r.URL, ".git") && !strings.Contains(r.URL, "github.com") && !strings.Contains(r.URL, "gitlab.com") {
-						errors = append(errors, fmt.Sprintf("Container '%s' GIT resource at index %d does not look like a valid git URL", c.ID, j))
-					}
-				}
+			if err := resourcetype.ValidateResource(r.Type, spec); err != nil {
+				errors = append(errors, fmt.Sprintf("Container '%s' resource %d: %v", c.ID, j, err))
 			}
 		}
 	}
@@ -373,6 +380,7 @@ func ConvertTemplateSpecV2ToJobSpec(v2 *TemplateSpecV2) *JobSpec {
 				URL:    r.URL,
 				Target: r.Target,
 				Files:  r.Files,
+				Config: r.Config,
 			})
 		}
 
