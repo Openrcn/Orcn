@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -16,10 +16,8 @@ import (
 	"orcn/providers/nosana"
 	"orcn/runtimes/ollama"
 	"orcn/runtimes/vllm"
-	"orcn/services/controller"
 	"orcn/services/gateway/api"
 	"orcn/services/gateway/health"
-	"orcn/services/gateway/ingress"
 )
 
 func main() {
@@ -60,34 +58,17 @@ func main() {
 	// 3. Create shared services
 	healthChecker := health.New(db)
 
-	// 4. Start Background Controller Loop (Control Plane)
-	ctrl := controller.New(db, cfg)
-	ctrl.StartLoop()
-
-	// 5. Start the Admin API Server (Control Plane)
+	// 4. Start the Gateway API Server. Reconciliation is owned by cmd/controller
+	// and public traffic is owned by cmd/ingress.
 	apiServer := api.New(db, healthChecker, cfg)
 	apiSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.APIPort),
+		Addr:    ":" + strconv.Itoa(cfg.APIPort),
 		Handler: apiServer.Handler(),
 	}
 	go func() {
 		log.Info("Admin API listening on :%d", cfg.APIPort)
 		if err := apiSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal("API Server failed: %v", err)
-		}
-	}()
-
-	internalAPI := fmt.Sprintf("http://127.0.0.1:%d/api/v1/internal/routes", cfg.APIPort)
-	ingressServer := ingress.New(internalAPI, cfg)
-	ingressSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.IngressPort),
-		Handler: ingressServer.Handler(),
-	}
-
-	go func() {
-		log.Info("Public AI Ingress listening on :%d", cfg.IngressPort)
-		if err := ingressSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("Ingress Server failed (did you forget sudo?): %v", err)
 		}
 	}()
 
@@ -99,9 +80,6 @@ func main() {
 
 	if err := apiSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error("API server shutdown error: %v", err)
-	}
-	if err := ingressSrv.Shutdown(shutdownCtx); err != nil {
-		log.Error("Ingress server shutdown error: %v", err)
 	}
 	log.Info("Shutdown complete")
 }

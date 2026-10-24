@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,23 +11,27 @@ import (
 	"orcn/core"
 	"orcn/core/providerconn"
 	"orcn/models"
+	"orcn/pkg/routing"
 
 	"gorm.io/gorm"
 )
 
 type createDeploymentRequest struct {
-	Name                 string            `json:"name"`
-	TemplateID           string            `json:"template_id"`
-	ProviderID           string            `json:"provider_id"`
-	ProviderConnectionID string            `json:"provider_connection_id"`
-	InstanceTypeID       string            `json:"instance_type_id"`
-	InstanceName         string            `json:"instance_name"`
-	RuntimeID            string            `json:"runtime_id"`
-	Task                 core.ModelTask    `json:"task,omitempty"`
-	ModelID              string            `json:"model_id"`
-	Replicas             int               `json:"replicas"`
-	HFToken              string            `json:"hf_token,omitempty"`
-	AdvancedConfig       map[string]string `json:"advanced_config,omitempty"`
+	Name                  string            `json:"name"`
+	TemplateID            string            `json:"template_id"`
+	ProviderID            string            `json:"provider_id"`
+	ProviderConnectionID  string            `json:"provider_connection_id"`
+	InstanceTypeID        string            `json:"instance_type_id"`
+	InstanceName          string            `json:"instance_name"`
+	RuntimeID             string            `json:"runtime_id"`
+	Task                  core.ModelTask    `json:"task,omitempty"`
+	ModelID               string            `json:"model_id"`
+	Replicas              int               `json:"replicas"`
+	HFToken               string            `json:"hf_token,omitempty"`
+	AdvancedConfig        map[string]string `json:"advanced_config,omitempty"`
+	RequestsPerMinute     int               `json:"requests_per_minute,omitempty"`
+	BurstRequests         int               `json:"burst_requests,omitempty"`
+	MaxConcurrentRequests int               `json:"max_concurrent_requests,omitempty"`
 }
 
 type actionRequest struct {
@@ -34,18 +39,49 @@ type actionRequest struct {
 	TimeoutMinutes int    `json:"timeout_minutes,omitempty"`
 }
 
-func validateDeploymentName(name string, db *gorm.DB) error {
-	reservedNames := map[string]bool{"llm": true, "embedding": true}
-	if reservedNames[name] {
-		return fmt.Errorf("the deployment name '%s' is reserved for system use", name)
-	}
-	if strings.Contains(name, "/") {
-		return fmt.Errorf("deployment name cannot contain '/'")
+func validateDeploymentName(name, organizationID string, db *gorm.DB) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("deployment name is required")
 	}
 	var count int64
-	db.Model(&models.Deployment{}).Where("name = ?", name).Count(&count)
+	db.Model(&models.Deployment{}).Where("organization_id = ? AND name = ?", organizationID, name).Count(&count)
 	if count > 0 {
-		return fmt.Errorf("a deployment with the name '%s' already exists", name)
+		return fmt.Errorf("a deployment with the name '%s' already exists in this organization", name)
+	}
+	return nil
+}
+
+func (s *Server) resolveDeploymentRoute(r *http.Request, name string) (string, string, error) {
+	organizationID := getOrgID(r)
+	var organization models.Organization
+	if err := s.DB.Where("id = ?", organizationID).First(&organization).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", "", fmt.Errorf("organization not found")
+		}
+		return "", "", err
+	}
+	routeKey, err := routing.DeploymentRouteKey(name, organization.Name)
+	if err != nil {
+		return "", "", err
+	}
+	var count int64
+	s.DB.Model(&models.Deployment{}).Where("route_key = ?", routeKey).Count(&count)
+	if count > 0 {
+		return "", "", fmt.Errorf("public route '%s' is already in use", routeKey)
+	}
+	return organizationID, routeKey, nil
+}
+
+func (s *Server) validateIngressPolicy(kind string, rpm, burst, concurrent int) error {
+	if rpm < 0 || burst < 0 || concurrent < 0 {
+		return fmt.Errorf("ingress policy values cannot be negative")
+	}
+	maxRPM := s.Cfg.IngressInferenceMaxRPM
+	if kind == "workload" {
+		maxRPM = s.Cfg.IngressWorkloadMaxRPM
+	}
+	if rpm > maxRPM {
+		return fmt.Errorf("requests_per_minute exceeds the %s maximum of %d", kind, maxRPM)
 	}
 	return nil
 }
@@ -57,7 +93,16 @@ func (s *Server) handleCreateDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := validateDeploymentName(req.Name, s.DB); err != nil {
+	organizationID, routeKey, err := s.resolveDeploymentRoute(r, req.Name)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateDeploymentName(req.Name, organizationID, s.DB); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.validateIngressPolicy("model_inference", req.RequestsPerMinute, req.BurstRequests, req.MaxConcurrentRequests); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -100,19 +145,25 @@ func (s *Server) handleCreateDeployment(w http.ResponseWriter, r *http.Request) 
 	// 1. Create the parent Deployment row
 	deploymentID := fmt.Sprintf("dep-%s-%d", req.Name, time.Now().UnixMilli())
 	dbDeployment := models.Deployment{
-		ID:                   deploymentID,
-		Name:                 req.Name,
-		TemplateID:           req.TemplateID,
-		Status:               models.DeploymentDraft,
-		ProviderID:           req.ProviderID,
-		ProviderConnectionID: req.ProviderConnectionID,
-		InstanceName:         req.InstanceName,
-		InstanceTypeID:       req.InstanceTypeID,
-		RuntimeID:            req.RuntimeID,
-		Task:                 string(req.Task),
-		ModelID:              req.ModelID,
-		Replicas:             req.Replicas,
-		JobSpecJSON:          specJSON,
+		ID:                    deploymentID,
+		OrganizationID:        organizationID,
+		Name:                  req.Name,
+		RouteKey:              routeKey,
+		TemplateID:            req.TemplateID,
+		Status:                models.DeploymentDraft,
+		ProviderID:            req.ProviderID,
+		ProviderConnectionID:  req.ProviderConnectionID,
+		InstanceName:          req.InstanceName,
+		InstanceTypeID:        req.InstanceTypeID,
+		RuntimeID:             req.RuntimeID,
+		Task:                  string(req.Task),
+		ModelID:               req.ModelID,
+		WorkloadType:          "model_inference",
+		Replicas:              req.Replicas,
+		RequestsPerMinute:     req.RequestsPerMinute,
+		BurstRequests:         req.BurstRequests,
+		MaxConcurrentRequests: req.MaxConcurrentRequests,
+		JobSpecJSON:           specJSON,
 	}
 	if err := s.DB.Create(&dbDeployment).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to save deployment: "+err.Error())
@@ -181,9 +232,10 @@ func (s *Server) handleCreateDeployment(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 	idOrName := r.PathValue("id")
+	orgID := getOrgID(r)
 
 	var dep models.Deployment
-	if err := s.DB.Preload("Nodes").Preload("Endpoints").Where("id = ? OR name = ?", idOrName, idOrName).First(&dep).Error; err != nil {
+	if err := s.DB.Preload("Nodes").Preload("Endpoints").Where("organization_id = ? AND (id = ? OR name = ?)", orgID, idOrName, idOrName).First(&dep).Error; err != nil {
 		respondError(w, http.StatusNotFound, "Deployment not found")
 		return
 	}
@@ -193,11 +245,14 @@ func (s *Server) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 	var deployments []models.Deployment
+	orgID := getOrgID(r)
 
 	query := s.DB.
 		Select(
 			"id",
+			"organization_id",
 			"name",
+			"route_key",
 			"template_id",
 			"status",
 			"provider_id",
@@ -209,6 +264,9 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 			"model_id",
 			"workload_type",
 			"replicas",
+			"requests_per_minute",
+			"burst_requests",
+			"max_concurrent_requests",
 			"confidential_mode",
 			"created_at",
 			"updated_at",
@@ -216,7 +274,7 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 		Preload("Nodes").
 		Preload("Endpoints")
 
-	if err := query.Find(&deployments).Error; err != nil {
+	if err := query.Where("organization_id = ?", orgID).Find(&deployments).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to fetch deployments")
 		return
 	}
@@ -226,9 +284,10 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeploymentAction(w http.ResponseWriter, r *http.Request) {
 	deploymentID := r.PathValue("id")
+	orgID := getOrgID(r)
 
 	var dep models.Deployment
-	if err := s.DB.Preload("Nodes").Where("id = ?", deploymentID).First(&dep).Error; err != nil {
+	if err := s.DB.Preload("Nodes").Where("id = ? AND organization_id = ?", deploymentID, orgID).First(&dep).Error; err != nil {
 		respondError(w, http.StatusNotFound, "Deployment not found in DB")
 		return
 	}
@@ -256,13 +315,17 @@ func (s *Server) handleDeploymentAction(w http.ResponseWriter, r *http.Request) 
 		var actionErr error
 		switch req.Action {
 		case "start":
-			if p, ok := provider.(interface{ StartDeploymentWithSpec(string, *core.JobSpec) error }); ok {
+			if p, ok := provider.(interface {
+				StartDeploymentWithSpec(string, *core.JobSpec) error
+			}); ok {
 				actionErr = p.StartDeploymentWithSpec(node.ID, &spec)
 			} else {
 				actionErr = provider.StartDeployment(node.ID)
 			}
 		case "stop":
-			if p, ok := provider.(interface{ StopDeploymentWithSpec(string, *core.JobSpec) error }); ok {
+			if p, ok := provider.(interface {
+				StopDeploymentWithSpec(string, *core.JobSpec) error
+			}); ok {
 				actionErr = p.StopDeploymentWithSpec(node.ID, &spec)
 			} else {
 				actionErr = provider.StopDeployment(node.ID)
@@ -295,6 +358,13 @@ func (s *Server) handleDeploymentAction(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGetInternalRoutes(w http.ResponseWriter, r *http.Request) {
+	if s.Cfg.InternalAPIToken != "" {
+		expected := "Bearer " + s.Cfg.InternalAPIToken
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(expected)) != 1 {
+			respondError(w, http.StatusUnauthorized, "unauthorized internal request")
+			return
+		}
+	}
 	var deps []models.Deployment
 	if err := s.DB.Preload("Nodes").Where("status IN ?", []string{models.DeploymentReady, models.DeploymentRunning}).Find(&deps).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to fetch internal routes")
@@ -355,14 +425,17 @@ func (s *Server) generateNodeEndpoints(deploymentID, nodeID string, ports []int)
 }
 
 type createWorkloadRequest struct {
-	Name                 string          `json:"name"`
-	TemplateID           string          `json:"template_id"`
-	ProviderID           string          `json:"provider_id"`
-	ProviderConnectionID string          `json:"provider_connection_id"`
-	InstanceTypeID       string          `json:"instance_type_id"`
-	InstanceName         string          `json:"instance_name"`
-	Replicas             int             `json:"replicas"`
-	Spec                 json.RawMessage `json:"spec"`
+	Name                  string          `json:"name"`
+	TemplateID            string          `json:"template_id"`
+	ProviderID            string          `json:"provider_id"`
+	ProviderConnectionID  string          `json:"provider_connection_id"`
+	InstanceTypeID        string          `json:"instance_type_id"`
+	InstanceName          string          `json:"instance_name"`
+	Replicas              int             `json:"replicas"`
+	RequestsPerMinute     int             `json:"requests_per_minute,omitempty"`
+	BurstRequests         int             `json:"burst_requests,omitempty"`
+	MaxConcurrentRequests int             `json:"max_concurrent_requests,omitempty"`
+	Spec                  json.RawMessage `json:"spec"`
 }
 
 func (s *Server) handleCreateWorkload(w http.ResponseWriter, r *http.Request) {
@@ -372,7 +445,16 @@ func (s *Server) handleCreateWorkload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateDeploymentName(req.Name, s.DB); err != nil {
+	organizationID, routeKey, err := s.resolveDeploymentRoute(r, req.Name)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateDeploymentName(req.Name, organizationID, s.DB); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.validateIngressPolicy("workload", req.RequestsPerMinute, req.BurstRequests, req.MaxConcurrentRequests); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -406,17 +488,22 @@ func (s *Server) handleCreateWorkload(w http.ResponseWriter, r *http.Request) {
 	// 3. Create the Database Record to archive this deployment
 	deploymentID := fmt.Sprintf("workload-%s-%d", req.Name, time.Now().UnixMilli())
 	dbDeployment := models.Deployment{
-		ID:                   deploymentID,
-		Name:                 req.Name,
-		TemplateID:           req.TemplateID,
-		Status:               models.DeploymentDraft,
-		ProviderID:           req.ProviderID,
-		ProviderConnectionID: req.ProviderConnectionID,
-		InstanceName:         req.InstanceName,
-		InstanceTypeID:       req.InstanceTypeID,
-		WorkloadType:         "container",
-		Replicas:             req.Replicas,
-		JobSpecJSON:          string(req.Spec),
+		ID:                    deploymentID,
+		OrganizationID:        organizationID,
+		Name:                  req.Name,
+		RouteKey:              routeKey,
+		TemplateID:            req.TemplateID,
+		Status:                models.DeploymentDraft,
+		ProviderID:            req.ProviderID,
+		ProviderConnectionID:  req.ProviderConnectionID,
+		InstanceName:          req.InstanceName,
+		InstanceTypeID:        req.InstanceTypeID,
+		WorkloadType:          "workload",
+		Replicas:              req.Replicas,
+		RequestsPerMinute:     req.RequestsPerMinute,
+		BurstRequests:         req.BurstRequests,
+		MaxConcurrentRequests: req.MaxConcurrentRequests,
+		JobSpecJSON:           string(req.Spec),
 	}
 
 	if err := s.DB.Create(&dbDeployment).Error; err != nil {
@@ -431,7 +518,7 @@ func (s *Server) handleCreateWorkload(w http.ResponseWriter, r *http.Request) {
 			ports = append(ports, p.Port)
 		}
 	}
-	s.generateDeploymentEndpoints(dbDeployment.ID, req.Name, ports)
+	s.generateDeploymentEndpoints(dbDeployment.ID, routeKey, ports)
 
 	// 4. Launch on the infrastructure
 	var createdNodeIDs []string

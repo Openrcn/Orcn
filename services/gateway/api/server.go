@@ -2,32 +2,16 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
-	"regexp"
-	"strings"
 
-	"orcn/core"
 	"orcn/core/config"
 	"orcn/core/logger"
-	"orcn/models"
 	"orcn/services/gateway/health"
 
 	"gorm.io/gorm"
 )
 
 var apiLog = logger.New("API")
-
-// slugRe matches any character that is not allowed in a route hostname.
-var slugRe = regexp.MustCompile(`[^a-z0-9-]`)
-
-// slugify produces the subdomain used for a deployment route. It must stay in
-// sync with the ingress helper of the same name.
-func slugify(name string) string {
-	return slugRe.ReplaceAllString(strings.ToLower(name), "-")
-}
 
 type Server struct {
 	DB     *gorm.DB
@@ -48,107 +32,7 @@ func New(db *gorm.DB, hc *health.Checker, cfg *config.Config) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.withSubdomainProxy(withLogging(withCORS(s.mux)))
-}
-
-func (s *Server) withSubdomainProxy(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
-		if strings.Contains(host, ":") {
-			host = strings.Split(host, ":")[0]
-		}
-		
-		if host == s.Cfg.AppDomain || host == "127.0.0.1" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		subdomain := strings.TrimSuffix(host, "."+s.Cfg.AppDomain)
-
-		var dep models.Deployment
-		var candidates []models.Deployment
-		if err := s.DB.Preload("Nodes").Where("status IN ?", []string{models.DeploymentReady, models.DeploymentRunning}).Find(&candidates).Error; err != nil {
-			next.ServeHTTP(w, r)
-			return
-		}
-		for _, c := range candidates {
-			if slugify(c.Name) == subdomain {
-				dep = c
-				break
-			}
-		}
-		if dep.ID == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Find a healthy node with an endpoint
-		var targetURL *url.URL
-		var targetContainerID string
-		var targetPort int
-		for _, node := range dep.Nodes {
-			if node.NodeURL != "" {
-				parsed, err := url.Parse(node.NodeURL)
-				if err == nil {
-					targetURL = parsed
-					break
-				}
-			}
-			if node.EndpointsJSON != "" {
-				var eps []core.Endpoint
-				if err := json.Unmarshal([]byte(node.EndpointsJSON), &eps); err == nil && len(eps) > 0 {
-					baseUrl := eps[0].BaseURL
-					if !strings.HasPrefix(baseUrl, "http") {
-						proto := "http"
-						if eps[0].Protocol != "" {
-							proto = eps[0].Protocol
-						}
-						baseUrl = fmt.Sprintf("%s://%s", proto, baseUrl)
-					}
-
-					parsed, err := url.Parse(baseUrl)
-					if err == nil {
-						targetURL = parsed
-						targetContainerID = eps[0].ContainerID
-						targetPort = eps[0].Port
-						break
-					}
-				}
-			}
-		}
-
-		if targetURL == nil {
-			http.Error(w, "No active endpoints found for this workload", http.StatusBadGateway)
-			return
-		}
-
-		proxy := httputil.NewSingleHostReverseProxy(targetURL)
-		
-		// The original Director sets req.URL but leaves req.Host untouched.
-		// Cloudflare/Kubernetes Ingress controllers will throw a 502 Bad Gateway 
-		// if req.Host is still "webui.localhost:8080". We MUST overwrite it.
-		originalDirector := proxy.Director
-		proxy.Director = func(req *http.Request) {
-			originalDirector(req)
-			req.Host = targetURL.Host 
-			
-			// Fix CORS/CSRF issues for strict apps (like n8n)
-			if req.Header.Get("Origin") != "" {
-				req.Header.Set("Origin", targetURL.Scheme+"://"+targetURL.Host)
-			}
-			req.Header.Set("X-Forwarded-Proto", "https")
-			if targetContainerID != "" {
-				req.Header.Set("X-Orcn-Container", targetContainerID)
-			}
-			if targetPort != 0 {
-				req.Header.Set("X-Orcn-Port", fmt.Sprintf("%d", targetPort))
-			}
-		}
-		
-		r.Header.Set("X-Forwarded-Host", host)
-
-		proxy.ServeHTTP(w, r)
-	})
+	return withLogging(withCORS(s.mux))
 }
 
 func (s *Server) registerRoutes() {
@@ -164,14 +48,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/deployments", s.handleCreateDeployment)
 	s.mux.HandleFunc("GET /api/v1/deployments", s.handleListDeployments)
 	s.mux.HandleFunc("GET /api/v1/deployments/{id}", s.handleGetDeployment)
-	
+
 	//node logging + metrics
 	s.mux.HandleFunc("GET /api/v1/deployments/{id}/nodes/{node_id}/logs", s.handleNodeLogs)
 	s.mux.HandleFunc("GET /api/v1/deployments/{id}/nodes/{node_id}/events", s.handleNodeEvents)
 	s.mux.HandleFunc("GET /api/v1/deployments/{id}/nodes/{node_id}/metrics", s.handleNodeMetrics)
 
 	s.mux.HandleFunc("POST /api/v1/deployments/{id}/action", s.handleDeploymentAction)
-	
+
 	s.mux.HandleFunc("POST /api/v1/workloads", s.handleCreateWorkload)
 
 	s.mux.HandleFunc("GET /api/v1/secrets", s.handleListSecrets)
@@ -210,10 +94,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/templates/{id}", s.handleDeleteTemplate)
 
 	s.mux.HandleFunc("GET /api/v1/endpoints", s.handleListEndpoints)
-	
+
 	// Internal service endpoints
 	// TODO Polling -> WebSockets|sse or ?watch=true
-	s.mux.HandleFunc("GET /api/v1/internal/routes", s.handleGetInternalRoutes) 
+	s.mux.HandleFunc("GET /api/v1/internal/routes", s.handleGetInternalRoutes)
 }
 
 func respondJSON(w http.ResponseWriter, status int, data any) {

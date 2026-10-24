@@ -1,7 +1,11 @@
-.PHONY: all build-gateway build-controller build-node-agent build-resource-loader run-gateway run-controller run-node-agent clean docker-node-agent
+.PHONY: all build-gateway build-controller build-ingress build-node-agent build-resource-loader run-gateway run-controller run-ingress run-node-agent clean docker-node-agent
+
+# Override when a shared Go build cache is desired. /tmp works in restricted
+# containers and keeps `make build-*` independent of a read-only user cache.
+ORCN_GO_CACHE ?= /tmp/orcn-go-build
 
 # Default target
-all: build-gateway build-controller build-node-agent build-resource-loader
+all: build-gateway build-controller build-ingress build-node-agent build-resource-loader
 
 # ==========================================
 # Gateway Service
@@ -30,6 +34,20 @@ build-controller:
 run-controller:
 	@echo "Starting Controller Service..."
 	@go run ./cmd/controller
+
+# ==========================================
+# Public Ingress Service
+# ==========================================
+
+build-ingress:
+	@echo "Building Ingress Service..."
+	@mkdir -p bin
+	@GOCACHE=$(ORCN_GO_CACHE) go build -o bin/ingress ./cmd/ingress
+	@echo "Build complete! Binary located at: bin/ingress"
+
+run-ingress:
+	@echo "Starting Ingress Service..."
+	@go run ./cmd/ingress
 
 # ==========================================
 # Node Agent

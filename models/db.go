@@ -1,9 +1,12 @@
 package models
 
 import (
+	"fmt"
+
 	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"orcn/pkg/routing"
 )
 
 func InitDB(filepath string) (*gorm.DB, error) {
@@ -11,7 +14,7 @@ func InitDB(filepath string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Resolve duplicate provider connection names before the unique
 	// (organization_id, name) index is created. Rows created before the
 	// constraint may collide and would otherwise abort the migration.
@@ -30,7 +33,7 @@ func InitDB(filepath string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Ensure organization_id column exists with default for secrets (SQLite limitation)
 	if !db.Migrator().HasColumn(&Secret{}, "OrganizationID") {
 		if err := db.Exec("ALTER TABLE secrets ADD COLUMN organization_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'").Error; err != nil {
@@ -46,11 +49,54 @@ func InitDB(filepath string) (*gorm.DB, error) {
 	}
 	db.FirstOrCreate(&defaultOrg, Organization{ID: defaultOrg.ID})
 
+	if err := migrateDeploymentRouteIdentity(db); err != nil {
+		return nil, err
+	}
+
 	if err := repairProviderConnectionSecrets(db); err != nil {
 		return nil, err
 	}
 
 	return db, nil
+}
+
+// migrateDeploymentRouteIdentity transitions deployments from a global name to
+// an organization-scoped name and backfills the immutable ingress route key.
+// It is deliberately explicit because AutoMigrate does not remove obsolete
+// unique indexes.
+func migrateDeploymentRouteIdentity(db *gorm.DB) error {
+	if err := db.Model(&Deployment{}).
+		Where("organization_id IS NULL OR organization_id = ''").
+		Update("organization_id", "00000000-0000-0000-0000-000000000001").Error; err != nil {
+		return err
+	}
+
+	var deployments []Deployment
+	if err := db.Preload("Organization").Find(&deployments).Error; err != nil {
+		return err
+	}
+	for _, deployment := range deployments {
+		if deployment.RouteKey != "" {
+			continue
+		}
+		key, err := routing.DeploymentRouteKey(deployment.Name, deployment.Organization.Name)
+		if err != nil {
+			return fmt.Errorf("build route key for deployment %q: %w", deployment.ID, err)
+		}
+		if err := db.Model(&Deployment{}).Where("id = ?", deployment.ID).Update("route_key", key).Error; err != nil {
+			return err
+		}
+	}
+
+	// GORM used this conventional name for the former Name uniqueIndex. It must
+	// be removed so a different organization can create the same deployment name.
+	if db.Migrator().HasIndex(&Deployment{}, "idx_deployments_name") {
+		if err := db.Migrator().DropIndex(&Deployment{}, "idx_deployments_name"); err != nil {
+			return err
+		}
+	}
+
+	return db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_deployments_route_key ON deployments(route_key)").Error
 }
 
 // repairProviderConnectionSecrets fixes rows created before Secret had a UUID

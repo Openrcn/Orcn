@@ -75,6 +75,7 @@ type Endpoint struct {
 	BaseURL     string `json:"base_url"`
 	Protocol    string `json:"protocol"`
 	ContainerID string `json:"container_id,omitempty"`
+	Primary     bool   `json:"primary,omitempty"`
 }
 
 type ModelInfo struct {
@@ -163,25 +164,25 @@ type PropertySchema struct {
 
 // ArrayItemSchema describes the schema for items in an array field.
 type ArrayItemSchema struct {
-	Type       string                   `json:"type"`
+	Type       string                    `json:"type"`
 	Properties map[string]PropertySchema `json:"properties,omitempty"`
-	Required   []string                 `json:"required,omitempty"`
+	Required   []string                  `json:"required,omitempty"`
 }
 
 // ProviderField describes one input a provider needs to establish a connection.
 // It is the single source of truth for the connection form rendered by clients.
 type ProviderField struct {
-	Key             string          `json:"key"`
-	Name            string          `json:"name"`
-	Description     string          `json:"description,omitempty"`
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 	// Type is one of: text, password, number, boolean, select, file, json_array, string_array, number_array.
-	Type string `json:"type"`
-	Required bool `json:"required"`
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
 	// Secret marks the value as sensitive. Secrets are encrypted at rest;
-	Secret      bool     `json:"secret"`
-	Default     string   `json:"default,omitempty"`
-	Placeholder string   `json:"placeholder,omitempty"`
-	Options     []string `json:"options,omitempty"`
+	Secret          bool             `json:"secret"`
+	Default         string           `json:"default,omitempty"`
+	Placeholder     string           `json:"placeholder,omitempty"`
+	Options         []string         `json:"options,omitempty"`
 	ArrayItemSchema *ArrayItemSchema `json:"array_item_schema,omitempty"`
 }
 

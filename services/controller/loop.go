@@ -122,6 +122,7 @@ func (c *Controller) reconcile() {
 					}
 
 					if len(info.Endpoints) > 0 {
+						info.Endpoints = markPrimaryEndpoint(info.Endpoints, spec)
 						if b, err := json.Marshal(info.Endpoints); err == nil {
 							if n.EndpointsJSON != string(b) {
 								n.EndpointsJSON = string(b)
@@ -139,6 +140,12 @@ func (c *Controller) reconcile() {
 					if n.InfraStatus == models.InfraRunning && len(info.Endpoints) > 0 {
 						if hcPath != "" {
 							ep := info.Endpoints[0]
+							for _, endpoint := range info.Endpoints {
+								if endpoint.Primary {
+									ep = endpoint
+									break
+								}
+							}
 							c.Health.RunCheck(n.ID, ep.BaseURL, ep.Protocol, hcPath, hcExpected)
 						} else {
 							// Generic workload, no health check required. Mark as Ready immediately!
@@ -155,6 +162,28 @@ func (c *Controller) reconcile() {
 		// Update parent deployment status based on current DB state of nodes
 		c.updateDeploymentStatus(dep)
 	}
+}
+
+func markPrimaryEndpoint(endpoints []core.Endpoint, spec core.JobSpec) []core.Endpoint {
+	publicPorts := make(map[int]bool)
+	for _, container := range spec.Containers {
+		for _, exposed := range container.Args.Expose {
+			if exposed.IsPublic {
+				publicPorts[exposed.Port] = true
+			}
+		}
+	}
+	primary := 0
+	for i, endpoint := range endpoints {
+		if len(publicPorts) == 0 || publicPorts[endpoint.Port] {
+			primary = i
+			break
+		}
+	}
+	for i := range endpoints {
+		endpoints[i].Primary = i == primary
+	}
+	return endpoints
 }
 
 func (c *Controller) updateDeploymentStatus(dep models.Deployment) {
